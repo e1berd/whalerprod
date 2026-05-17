@@ -7,11 +7,8 @@ install:
     pnpm install
 
 dev:
-    supabase start
     pnpm dev
 
-dev-apps:
-    pnpm dev
 
 dev-web:
     pnpm --filter @whaler/web dev

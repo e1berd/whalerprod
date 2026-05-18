@@ -20,14 +20,17 @@ Realtime browser code editor with self-hosted IAM, collaborative editing, and Do
    just install
    ```
 
-2. Start local Supabase:
+2. Start the full local dev stack:
 
    ```bash
-   just supabase-start
-   just supabase-status
+   just dev
    ```
 
-3. Put the values from `supabase status` into `.env`. The app expects:
+   `just dev` starts local Supabase, builds missing sandbox preview images,
+   starts TURN, and then runs the app services.
+
+3. If this is the first local run, copy the values from `just supabase-status`
+   into `.env`. The app expects:
 
    - `DATABASE_URL`
    - `SUPABASE_JWT_SECRET`
@@ -41,7 +44,7 @@ Realtime browser code editor with self-hosted IAM, collaborative editing, and Do
    just supabase-reset
    ```
 
-5. Run services:
+5. Individual services can still be run separately:
 
    ```bash
    just dev-api

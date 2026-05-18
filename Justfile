@@ -6,8 +6,13 @@ default:
 install:
     pnpm install
 
-dev: turn-up
+dev: supabase-start sandbox-up turn-up
     pnpm dev
+
+sandbox-up: sandbox-network sandbox-images
+
+sandbox-network:
+    docker network create whaler-preview >/dev/null 2>&1 || true
 
 turn-up:
     docker compose --profile turn up -d coturn
@@ -51,6 +56,26 @@ typecheck:
 
 build:
     pnpm build
+
+sandbox-images:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    images=(
+      "whaler/sandbox-vite-vue:latest infra/sandbox-images/vite-vue"
+      "whaler/sandbox-vite-react:latest infra/sandbox-images/vite-react"
+      "whaler/sandbox-vite-angular:latest infra/sandbox-images/vite-angular"
+      "whaler/sandbox-vite-js:latest infra/sandbox-images/vite-js"
+      "whaler/sandbox-vite-ts:latest infra/sandbox-images/vite-ts"
+    )
+    for item in "${images[@]}"; do
+      image="${item%% *}"
+      context="${item#* }"
+      if docker image inspect "$image" >/dev/null 2>&1; then
+        echo "$image already exists"
+      else
+        docker build -t "$image" "$context"
+      fi
+    done
 
 compose-up:
     docker compose up --build

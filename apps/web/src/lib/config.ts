@@ -1,6 +1,32 @@
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000"
-export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? "http://127.0.0.1:54321"
 export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "dev-anon-key"
+
+function sameOriginProxyUrl(path: string): string {
+  if (typeof window === "undefined") return path
+  return `${window.location.origin}${path}`
+}
+
+function supabaseUrl(): string {
+  const configured = import.meta.env.VITE_SUPABASE_URL
+  if (!configured) return sameOriginProxyUrl("/supabase")
+
+  try {
+    const url = new URL(configured)
+    if (
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost") &&
+      url.port === "54321" &&
+      typeof window !== "undefined"
+    ) {
+      return sameOriginProxyUrl("/supabase")
+    }
+  } catch {
+    return configured
+  }
+
+  return configured
+}
+
+export const SUPABASE_URL = supabaseUrl()
 
 export function collabUrl(): string {
   const configured = import.meta.env.VITE_COLLAB_URL

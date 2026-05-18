@@ -39,6 +39,19 @@ type PresenceEntry = {
   location?: FileLocation
 }
 
+type PreviewMode = "web" | "terminal"
+
+type WorkspacePreview = {
+  id: string
+  type: PreviewMode
+  host: string
+  url: string
+  command: string
+  status?: "running"
+  exitCode?: number | null
+  output?: string
+}
+
 const route = useRoute()
 const router = useRouter()
 const { accessToken, currentUser } = useSession()
@@ -53,6 +66,11 @@ const presence = ref<PresenceEntry[]>([])
 const error = ref<string | null>(null)
 const createDialog = ref<{ parent: string; kind: "file" | "directory"; name: string } | null>(null)
 const submittingCreate = ref(false)
+const previewMode = ref<PreviewMode>("web")
+const previewLoading = ref(false)
+const preview = ref<WorkspacePreview | null>(null)
+const previewError = ref<string | null>(null)
+const codeEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null)
 let lastTreeRevision = 0
 
 let presenceProvider: HocuspocusProvider | null = null
@@ -171,6 +189,42 @@ async function handleDeafenToggle(): Promise<void> {
 function openAudioSettings(): void {
   mediaPreparePendingMic.value = false
   mediaPrepareOpen.value = true
+}
+
+async function startPreview(): Promise<void> {
+  if (!workspaceId.value) return
+  previewLoading.value = true
+  previewError.value = null
+  try {
+    if (activeFile.value && codeEditorRef.value) {
+      const saveResponse = await client().v1.files[":fileId"].$put({
+        param: { fileId: activeFile.value.id },
+        json: { content: codeEditorRef.value.getContent() }
+      })
+      if (!saveResponse.ok) {
+        if (await handleUnauthorizedResponse(saveResponse)) return
+        previewError.value = await saveResponse.text()
+        return
+      }
+    }
+
+    const response = await client().v1.workspaces[":workspaceId"].previews.$post({
+      param: { workspaceId: workspaceId.value },
+      json: {
+        type: previewMode.value,
+        activePath: activeFile.value?.path ?? null
+      }
+    })
+    if (!response.ok) {
+      if (await handleUnauthorizedResponse(response)) return
+      previewError.value = await response.text()
+      return
+    }
+    const payload = (await response.json()) as { preview: WorkspacePreview }
+    preview.value = payload.preview
+  } finally {
+    previewLoading.value = false
+  }
 }
 
 async function onMediaPrepareConfirm(payload: { inputDeviceId: string | null; outputDeviceId: string | null }): Promise<void> {
@@ -584,50 +638,97 @@ onBeforeUnmount(disposePresence)
 
       <template #end>
         <main class="detail-editor">
-          <template v-if="activeFile">
-            <header class="editor-toolbar">
-              <div class="editor-title-row">
-                <v-icon class="editor-file-icon" icon="mdi-file-code-outline" size="24" />
-                <div class="editor-title-group">
-                  <p class="editor-title">{{ activeFile.path }}</p>
-                  <span class="muted">{{ workspace.imageRef }}</span>
+          <header class="editor-toolbar">
+            <div class="editor-title-row">
+              <v-icon class="editor-file-icon" icon="mdi-file-code-outline" size="24" />
+              <div class="editor-title-group">
+                <p class="editor-title">{{ activeFile?.path ?? workspace.name }}</p>
+                <span class="muted">{{ workspace.imageRef }}</span>
+              </div>
+            </div>
+            <div class="editor-toolbar-meta">
+              <v-chip
+                v-if="presenceList.length"
+                size="small"
+                variant="tonal"
+                prepend-icon="mdi-account-multiple-outline"
+              >
+                {{ presenceList.length }} online
+              </v-chip>
+              <v-btn-toggle v-model="previewMode" mandatory density="compact" variant="outlined">
+                <v-btn value="web" size="small" icon="mdi-web" title="Web preview" />
+                <v-btn value="terminal" size="small" icon="mdi-console" title="Terminal preview" />
+              </v-btn-toggle>
+              <v-btn
+                color="primary"
+                variant="elevated"
+                size="small"
+                icon="mdi-play"
+                title="Run preview"
+                :loading="previewLoading"
+                @click="startPreview"
+              />
+            </div>
+          </header>
+
+          <v-alert v-if="error" type="error" density="comfortable" variant="tonal" class="error-banner">
+            {{ error }}
+          </v-alert>
+
+          <div class="editor-preview-body">
+            <section class="editor-column">
+              <div v-if="activeFile" class="editor-host-wrapper">
+                <CodeEditor ref="codeEditorRef" :file="activeFile" :access-token="accessToken" :user="currentUser" />
+              </div>
+              <div v-else class="workspace-stub">
+                <div class="workspace-stub-card">
+                  <v-icon
+                    :icon="filePath ? 'mdi-file-question-outline' : 'mdi-folder-multiple-outline'"
+                    size="48"
+                    class="workspace-stub-icon"
+                  />
+                  <h1 class="workspace-stub-title">{{ workspace.name }}</h1>
+                  <p class="workspace-stub-subtitle">{{ workspace.imageRef }}</p>
+                  <p v-if="filePath" class="workspace-stub-hint workspace-stub-hint--warn">
+                    <v-icon icon="mdi-alert-circle-outline" size="16" class="me-1" />
+                    File <code>{{ filePath }}</code> not found in this workspace.
+                  </p>
+                  <p v-else class="workspace-stub-hint">Pick a file from the tree to start editing.</p>
                 </div>
               </div>
-              <div class="editor-toolbar-meta">
-                <v-chip
-                  v-if="presenceList.length"
-                  size="small"
-                  variant="tonal"
-                  prepend-icon="mdi-account-multiple-outline"
+            </section>
+
+            <aside class="preview-panel">
+              <header class="preview-toolbar">
+                <div class="preview-title">
+                  <v-icon :icon="preview?.type === 'terminal' ? 'mdi-console' : 'mdi-web'" size="18" />
+                  <span>Preview</span>
+                </div>
+                <a
+                  v-if="preview"
+                  class="preview-link"
+                  :href="preview.url"
+                  target="_blank"
+                  rel="noreferrer"
                 >
-                  {{ presenceList.length }} online
-                </v-chip>
+                  {{ preview.host }}
+                </a>
+              </header>
+              <v-alert v-if="previewError" type="error" density="compact" variant="tonal" class="preview-error">
+                {{ previewError }}
+              </v-alert>
+              <div v-if="!preview" class="preview-empty">
+                <v-icon icon="mdi-play-circle-outline" size="40" />
+                <span>Press Play to start preview.</span>
               </div>
-            </header>
-
-            <v-alert v-if="error" type="error" density="comfortable" variant="tonal" class="error-banner">
-              {{ error }}
-            </v-alert>
-
-            <div class="editor-host-wrapper">
-              <CodeEditor :file="activeFile" :access-token="accessToken" :user="currentUser" />
-            </div>
-          </template>
-          <div v-else class="workspace-stub">
-            <div class="workspace-stub-card">
-              <v-icon
-                :icon="filePath ? 'mdi-file-question-outline' : 'mdi-folder-multiple-outline'"
-                size="48"
-                class="workspace-stub-icon"
+              <iframe
+                v-else-if="preview.type === 'web'"
+                class="preview-frame"
+                :src="preview.url"
+                title="Workspace web preview"
               />
-              <h1 class="workspace-stub-title">{{ workspace.name }}</h1>
-              <p class="workspace-stub-subtitle">{{ workspace.imageRef }}</p>
-              <p v-if="filePath" class="workspace-stub-hint workspace-stub-hint--warn">
-                <v-icon icon="mdi-alert-circle-outline" size="16" class="me-1" />
-                File <code>{{ filePath }}</code> not found in this workspace.
-              </p>
-              <p v-else class="workspace-stub-hint">Pick a file from the tree to start editing.</p>
-            </div>
+              <pre v-else class="preview-terminal">{{ preview.output || "Command finished without output." }}</pre>
+            </aside>
           </div>
         </main>
       </template>
@@ -652,6 +753,19 @@ onBeforeUnmount(disposePresence)
             >
               {{ presenceList.length }} online
             </v-chip>
+            <v-btn-toggle v-model="previewMode" mandatory density="compact" variant="outlined">
+              <v-btn value="web" size="small" icon="mdi-web" title="Web preview" />
+              <v-btn value="terminal" size="small" icon="mdi-console" title="Terminal preview" />
+            </v-btn-toggle>
+            <v-btn
+              color="primary"
+              variant="elevated"
+              size="small"
+              icon="mdi-play"
+              title="Run preview"
+              :loading="previewLoading"
+              @click="startPreview"
+            />
           </div>
         </header>
 
@@ -660,7 +774,7 @@ onBeforeUnmount(disposePresence)
         </v-alert>
 
         <div class="editor-host-wrapper">
-          <CodeEditor :file="activeFile" :access-token="accessToken" :user="currentUser" />
+          <CodeEditor ref="codeEditorRef" :file="activeFile" :access-token="accessToken" :user="currentUser" />
         </div>
       </template>
       <div v-else class="workspace-stub">
@@ -679,6 +793,31 @@ onBeforeUnmount(disposePresence)
           <p v-else class="workspace-stub-hint">Pick a file from the tree to start editing.</p>
         </div>
       </div>
+      <aside class="preview-panel preview-panel--mobile">
+        <header class="preview-toolbar">
+          <div class="preview-title">
+            <v-icon :icon="preview?.type === 'terminal' ? 'mdi-console' : 'mdi-web'" size="18" />
+            <span>Preview</span>
+          </div>
+          <a v-if="preview" class="preview-link" :href="preview.url" target="_blank" rel="noreferrer">
+            {{ preview.host }}
+          </a>
+        </header>
+        <v-alert v-if="previewError" type="error" density="compact" variant="tonal" class="preview-error">
+          {{ previewError }}
+        </v-alert>
+        <div v-if="!preview" class="preview-empty">
+          <v-icon icon="mdi-play-circle-outline" size="40" />
+          <span>Press Play to start preview.</span>
+        </div>
+        <iframe
+          v-else-if="preview.type === 'web'"
+          class="preview-frame"
+          :src="preview.url"
+          title="Workspace web preview"
+        />
+        <pre v-else class="preview-terminal">{{ preview.output || "Command finished without output." }}</pre>
+      </aside>
     </main>
 
     <MediaPrepare
@@ -1005,6 +1144,14 @@ onBeforeUnmount(disposePresence)
   background: var(--md-sys-color-surface-container-lowest);
 }
 
+.editor-toolbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .editor-title-row {
   display: flex;
   align-items: center;
@@ -1098,6 +1245,107 @@ onBeforeUnmount(disposePresence)
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+.editor-preview-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 38%);
+}
+
+.editor-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-lowest);
+}
+
+.preview-panel--mobile {
+  min-height: 360px;
+  border-left: 0;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.preview-toolbar {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.preview-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface);
+}
+
+.preview-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--md-sys-color-primary);
+  text-decoration: none;
+}
+
+.preview-link:hover {
+  text-decoration: underline;
+}
+
+.preview-error {
+  margin: 10px 12px 0;
+}
+
+.preview-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 13px;
+}
+
+.preview-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: #fff;
+}
+
+.preview-terminal {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #101418;
+  color: #d7e2ea;
+  font: 12px/1.55 'Monaspace Neon', 'JetBrains Mono', monospace;
 }
 
 .detail-loading,

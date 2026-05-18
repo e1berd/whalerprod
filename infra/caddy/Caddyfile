@@ -14,7 +14,13 @@
 		Permissions-Policy "camera=(), microphone=(self), geolocation=()"
 	}
 
-	reverse_proxy web:80
+	handle_path /supabase/* {
+		reverse_proxy {$SUPABASE_UPSTREAM}
+	}
+
+	handle {
+		reverse_proxy web:80
+	}
 }
 
 {$API_DOMAIN} {
@@ -36,6 +42,17 @@
 {$VOICE_DOMAIN} {
 	encode zstd gzip
 	reverse_proxy voice:3003
+}
+
+*.{$STAND_BASE_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	reverse_proxy runner:3002
 }
 
 {$SUPABASE_DOMAIN} {

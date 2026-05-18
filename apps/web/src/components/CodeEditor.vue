@@ -104,6 +104,10 @@ function dispose() {
   remoteCursors.value = []
 }
 
+function getContent(): string {
+  return view.value?.state.doc.toString() ?? ""
+}
+
 async function mountEditor() {
   dispose()
   await nextTick()
@@ -178,6 +182,10 @@ watch(effectiveThemeName, (themeName) => {
 })
 
 onBeforeUnmount(dispose)
+
+defineExpose({
+  getContent
+})
 </script>
 
 <template>

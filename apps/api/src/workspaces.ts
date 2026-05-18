@@ -82,6 +82,10 @@ export function languageFromPath(path: string): string | null {
       return "html"
     case "css":
       return "css"
+    case "vue":
+      return "html"
+    case "php":
+      return "php"
     case "md":
       return "markdown"
     case "yml":
@@ -90,6 +94,24 @@ export function languageFromPath(path: string): string | null {
     default:
       return null
   }
+}
+
+function defaultWorkspaceFiles(image: NonNullable<ReturnType<typeof getSandboxImage>>, name: string) {
+  const defaults = image.defaultFiles?.length
+    ? image.defaultFiles
+    : [
+        {
+          path: "README.md",
+          content: `# ${name}\n\nWorkspace image: ${image.image}\n`
+        }
+      ]
+
+  return defaults.map((file) => ({
+    path: normalizeWorkspacePath(file.path),
+    kind: "file" as const,
+    language: languageFromPath(file.path),
+    content: file.content
+  }))
 }
 
 export async function createWorkspaceWithDefaults(input: {
@@ -132,18 +154,35 @@ export async function createWorkspaceWithDefaults(input: {
       role: "owner"
     })
 
-    await tx.insert(files).values([
-      {
+    await tx.insert(files).values(
+      defaultWorkspaceFiles(image, input.name).map((file) => ({
         workspaceId: workspace.id,
-        path: "README.md",
-        kind: "file",
-        language: "markdown",
-        content: `# ${input.name}\n\nWorkspace image: ${image.image}\n`
-      }
-    ])
+        ...file
+      }))
+    )
 
     return workspace
   })
+}
+
+export async function ensureWorkspaceDefaultFiles(input: {
+  workspaceId: string
+  imageId: string
+  name: string
+}) {
+  const image = getSandboxImage(input.imageId)
+  if (!image?.defaultFiles?.length) return
+
+  const defaults = defaultWorkspaceFiles(image, input.name)
+  for (const file of defaults) {
+    await db
+      .insert(files)
+      .values({
+        workspaceId: input.workspaceId,
+        ...file
+      })
+      .onConflictDoNothing()
+  }
 }
 
 export async function upsertPlainContentDocument(input: {

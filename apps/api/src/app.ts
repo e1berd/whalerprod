@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, ilike, inArray, like, sql } from "drizzle-orm"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
@@ -5,15 +6,16 @@ import { HTTPException } from "hono/http-exception"
 import { zValidator } from "@hono/zod-validator"
 import { z } from "zod"
 import { files, profiles, workspaceMembers, workspaces } from "@whaler/db/schema"
-import { SANDBOX_IMAGES } from "@whaler/shared"
+import { getSandboxImage, SANDBOX_IMAGES } from "@whaler/shared"
 import { requireAuth } from "./auth"
 import { db } from "./db"
 import { env } from "./env"
-import { createSandboxContainer, mirrorWorkspaceEntry } from "./runner"
+import { createSandboxContainer, mirrorWorkspaceEntry, RunnerRequestError, startWorkspacePreview } from "./runner"
 import {
   assertFileAccess,
   assertWorkspaceAccess,
   createWorkspaceWithDefaults,
+  ensureWorkspaceDefaultFiles,
   languageFromPath,
   parseWorkspacePath,
   verifyWorkspacePassword
@@ -48,6 +50,11 @@ const renameFileSchema = z.object({
   path: z.string().trim().min(1).max(500)
 })
 
+const startPreviewSchema = z.object({
+  type: z.enum(["web", "terminal"]),
+  activePath: z.string().trim().min(1).max(500).optional().nullable()
+})
+
 const updateProfileSchema = z.object({
   avatarUrl: z.string().url().max(500).nullable().optional(),
   displayName: z.string().trim().min(1).max(80).optional()
@@ -58,6 +65,12 @@ function isUniqueViolation(error: unknown): boolean {
   if ("code" in error && (error as { code?: string }).code === "23505") return true
   const cause = (error as { cause?: unknown }).cause
   return isUniqueViolation(cause)
+}
+
+function standUrl(host: string): string {
+  const protocol = env.nodeEnv === "development" ? "http" : "https"
+  const port = env.nodeEnv === "development" && env.standPublicPort ? `:${env.standPublicPort}` : ""
+  return `${protocol}://${host}${port}`
 }
 
 type ContainerStatus = "pending" | "starting" | "running" | "stopped" | "error"
@@ -77,6 +90,18 @@ type PublicWorkspace = {
 }
 
 const app = new Hono()
+
+app.onError((error, c) => {
+  if (error instanceof RunnerRequestError) {
+    const status = error.status >= 500 ? 502 : error.status
+    return c.text(error.message, status as 400)
+  }
+  if (error instanceof HTTPException) {
+    return error.getResponse()
+  }
+  console.error(error)
+  return c.text("Internal Server Error", 500)
+})
 
 app.use(
   "*",
@@ -207,6 +232,16 @@ const routes = app
       })
 
       if (runnerResult) {
+        const initialFiles = await db.select().from(files).where(eq(files.workspaceId, workspace.id))
+        for (const file of initialFiles) {
+          await mirrorWorkspaceEntry({
+            workspaceId: workspace.id,
+            path: file.path,
+            kind: file.kind,
+            ...(file.kind === "file" ? { content: file.content } : {})
+          })
+        }
+
         const [updated] = await db
           .update(workspaces)
           .set({
@@ -313,6 +348,14 @@ const routes = app
     const user = c.get("user")
     const workspaceId = c.req.param("workspaceId")
     await assertWorkspaceAccess(workspaceId, user)
+    const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+    if (workspace) {
+      await ensureWorkspaceDefaultFiles({
+        workspaceId,
+        imageId: workspace.imageId,
+        name: workspace.name
+      })
+    }
     const rows = await db.select().from(files).where(eq(files.workspaceId, workspaceId))
     return c.json({ files: rows })
   })
@@ -334,6 +377,100 @@ const routes = app
       .where(eq(workspaceMembers.workspaceId, workspaceId))
       .orderBy(asc(workspaceMembers.role))
     return c.json({ members: rows })
+  })
+  .post("/v1/workspaces/:workspaceId/previews", zValidator("json", startPreviewSchema), async (c) => {
+    const user = c.get("user")
+    const workspaceId = c.req.param("workspaceId")
+    const body = c.req.valid("json")
+    await assertWorkspaceAccess(workspaceId, user)
+
+    const [workspace] = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1)
+    if (!workspace) {
+      throw new HTTPException(404, { message: "Workspace not found" })
+    }
+
+    const image = getSandboxImage(workspace.imageId)
+    if (!image) {
+      throw new HTTPException(400, { message: "Workspace image is not configured for previews" })
+    }
+
+    await ensureWorkspaceDefaultFiles({
+      workspaceId,
+      imageId: workspace.imageId,
+      name: workspace.name
+    })
+
+    const container = await createSandboxContainer({
+      workspaceId,
+      image: workspace.imageRef
+    })
+    if (container) {
+      await db
+        .update(workspaces)
+        .set({
+          containerId: container.containerId,
+          containerStatus: container.status,
+          containerError: null,
+          updatedAt: new Date()
+        })
+        .where(eq(workspaces.id, workspaceId))
+    }
+
+    const rows = await db
+      .select()
+      .from(files)
+      .where(eq(files.workspaceId, workspaceId))
+      .orderBy(asc(files.kind), asc(files.path))
+
+    let activePath: string | undefined
+    if (body.activePath) {
+      const parsedActivePath = parseWorkspacePath(body.activePath)
+      if (rows.some((row) => row.kind === "file" && row.path === parsedActivePath)) {
+        activePath = parsedActivePath
+      }
+    }
+
+    for (const row of rows) {
+      await mirrorWorkspaceEntry({
+        workspaceId,
+        path: row.path,
+        kind: row.kind,
+        ...(row.kind === "file" ? { content: row.content } : {})
+      })
+    }
+
+    const previewId = randomUUID()
+    const standHost = `${previewId}.${env.standBaseDomain}`
+    const command = body.type === "web" ? image.preview.webCommand : image.preview.terminalCommand
+    const runnerResult = await startWorkspacePreview({
+      workspaceId,
+      previewId,
+      standHost,
+      type: body.type,
+      command,
+      port: image.preview.port,
+      activePath
+    })
+
+    if (!runnerResult) {
+      throw new HTTPException(503, { message: "Runner is not configured" })
+    }
+
+    return c.json({
+      preview: {
+        id: previewId,
+        type: body.type,
+        host: standHost,
+        url: standUrl(standHost),
+        port: image.preview.port,
+        command,
+        ...runnerResult
+      }
+    })
   })
   .post("/v1/workspaces/:workspaceId/files", zValidator("json", createFileSchema), async (c) => {
     const user = c.get("user")

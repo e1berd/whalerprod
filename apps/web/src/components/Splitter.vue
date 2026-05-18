@@ -167,18 +167,20 @@ onBeforeUnmount(() => {
   transition: background 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.splitter--vertical .splitter-handle-grip {
+.splitter--vertical > .splitter-handle > .splitter-handle-grip {
   width: 32px;
   height: 3px;
 }
 
-.splitter--horizontal .splitter-handle-grip {
+.splitter--horizontal > .splitter-handle > .splitter-handle-grip {
   width: 3px;
   height: 32px;
 }
 
-.splitter-handle:hover .splitter-handle-grip,
-.splitter-handle--active .splitter-handle-grip {
+.splitter--vertical > .splitter-handle:hover > .splitter-handle-grip,
+.splitter--vertical > .splitter-handle--active > .splitter-handle-grip,
+.splitter--horizontal > .splitter-handle:hover > .splitter-handle-grip,
+.splitter--horizontal > .splitter-handle--active > .splitter-handle-grip {
   background: var(--md-sys-color-primary);
 }
 </style>

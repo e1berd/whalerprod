@@ -36,7 +36,7 @@ type PresenceEntry = {
   location?: FileLocation
 }
 
-const route = useRoute("workspace-detail")
+const route = useRoute()
 const router = useRouter()
 const { accessToken, currentUser } = useSession()
 const { mdAndUp } = useDisplay()
@@ -55,7 +55,26 @@ let lastTreeRevision = 0
 let presenceProvider: HocuspocusProvider | null = null
 let presenceDoc: Y.Doc | null = null
 
-const workspaceId = computed(() => route.params.workspaceId)
+const workspaceId = computed(() => {
+  const raw = (route.params as { workspaceId?: string }).workspaceId
+  return raw ?? ""
+})
+const filePath = computed(() => {
+  const raw = (route.params as { filePath?: string | string[] }).filePath
+  if (Array.isArray(raw)) return raw.join("/")
+  return raw ?? ""
+})
+
+function navigateToFile(file: WorkspaceFile | null) {
+  if (file?.kind === "file") {
+    void router.push("workspace-file", {
+      workspaceId: workspaceId.value,
+      filePath: file.path
+    })
+  } else {
+    void router.push("workspace-detail", { workspaceId: workspaceId.value })
+  }
+}
 
 const statusIcon = computed(() => {
   switch (workspace.value?.containerStatus) {
@@ -136,9 +155,16 @@ async function loadFiles() {
     return
   }
   files.value = ((await response.json()).files as WorkspaceFile[]).sort((a, b) => a.path.localeCompare(b.path))
-  if (!activeFile.value || !files.value.find((file) => file.id === activeFile.value?.id)) {
-    activeFile.value = files.value.find((file) => file.kind === "file") ?? null
+  syncActiveFileFromRoute()
+}
+
+function syncActiveFileFromRoute() {
+  if (!filePath.value) {
+    activeFile.value = null
+    return
   }
+  const match = files.value.find((file) => file.path === filePath.value && file.kind === "file")
+  activeFile.value = match ?? null
 }
 
 function broadcastTreeChange() {
@@ -179,9 +205,9 @@ async function submitCreateDialog() {
     }
     const payload = (await response.json()) as { file: WorkspaceFile }
     files.value.push(payload.file)
-    if (payload.file.kind === "file") activeFile.value = payload.file
     createDialog.value = null
     broadcastTreeChange()
+    if (payload.file.kind === "file") navigateToFile(payload.file)
   } finally {
     submittingCreate.value = false
   }
@@ -198,8 +224,15 @@ async function renameFile(file: WorkspaceFile, nextPath: string) {
     error.value = await response.text()
     return
   }
+  const activeId = activeFile.value?.id
   await loadFiles()
   broadcastTreeChange()
+  if (activeId) {
+    const moved = files.value.find((row) => row.id === activeId)
+    if (moved && moved.kind === "file" && moved.path !== filePath.value) {
+      navigateToFile(moved)
+    }
+  }
 }
 
 async function deleteFile(file: WorkspaceFile) {
@@ -218,9 +251,10 @@ async function deleteFile(file: WorkspaceFile) {
     error.value = await response.text()
     return
   }
-  if (activeFile.value?.id === file.id) activeFile.value = null
+  const wasActive = activeFile.value?.id === file.id
   await loadFiles()
   broadcastTreeChange()
+  if (wasActive) navigateToFile(null)
 }
 
 function disposePresence() {
@@ -280,6 +314,7 @@ watch(workspaceId, (value) => {
   else disposePresence()
 })
 
+watch(filePath, syncActiveFileFromRoute)
 watch(activeFile, updatePresenceLocation)
 watch(currentUser, () => presenceProvider?.setAwarenessField("user", currentUser.value), { deep: true })
 
@@ -327,8 +362,18 @@ onBeforeUnmount(disposePresence)
       </div>
     </Teleport>
 
-    <aside v-if="mdAndUp" class="detail-sidebar">
-      <Splitter direction="vertical" :initial="65" :min="25" :max="85" storage-key="whaler.sidebar-split">
+    <Splitter
+      v-if="mdAndUp"
+      direction="horizontal"
+      :initial="22"
+      :min="14"
+      :max="50"
+      storage-key="whaler.workspace-split"
+      class="detail-split"
+    >
+      <template #start>
+        <aside class="detail-sidebar">
+          <Splitter direction="vertical" :initial="65" :min="25" :max="85" storage-key="whaler.sidebar-split">
         <template #start>
           <section class="sidebar-panel sidebar-panel--files">
             <header class="panel-heading">
@@ -357,7 +402,7 @@ onBeforeUnmount(disposePresence)
               :files="files"
               :active-file-id="activeFile?.id ?? null"
               :locations="presence"
-              @open="activeFile = $event"
+              @open="navigateToFile($event)"
               @rename="renameFile"
               @remove="deleteFile"
               @create-in="openCreateDialog"
@@ -446,6 +491,106 @@ onBeforeUnmount(disposePresence)
         </div>
       </footer>
     </aside>
+      </template>
+
+      <template #end>
+        <main class="detail-editor">
+          <template v-if="activeFile">
+            <header class="editor-toolbar">
+              <div class="editor-title-row">
+                <v-icon class="editor-file-icon" icon="mdi-file-code-outline" size="24" />
+                <div class="editor-title-group">
+                  <p class="editor-title">{{ activeFile.path }}</p>
+                  <span class="muted">{{ workspace.imageRef }}</span>
+                </div>
+              </div>
+              <div class="editor-toolbar-meta">
+                <v-chip
+                  v-if="presenceList.length"
+                  size="small"
+                  variant="tonal"
+                  prepend-icon="mdi-account-multiple-outline"
+                >
+                  {{ presenceList.length }} online
+                </v-chip>
+              </div>
+            </header>
+
+            <v-alert v-if="error" type="error" density="comfortable" variant="tonal" class="error-banner">
+              {{ error }}
+            </v-alert>
+
+            <div class="editor-host-wrapper">
+              <CodeEditor :file="activeFile" :access-token="accessToken" :user="currentUser" />
+            </div>
+          </template>
+          <div v-else class="workspace-stub">
+            <div class="workspace-stub-card">
+              <v-icon
+                :icon="filePath ? 'mdi-file-question-outline' : 'mdi-folder-multiple-outline'"
+                size="48"
+                class="workspace-stub-icon"
+              />
+              <h1 class="workspace-stub-title">{{ workspace.name }}</h1>
+              <p class="workspace-stub-subtitle">{{ workspace.imageRef }}</p>
+              <p v-if="filePath" class="workspace-stub-hint workspace-stub-hint--warn">
+                <v-icon icon="mdi-alert-circle-outline" size="16" class="me-1" />
+                File <code>{{ filePath }}</code> not found in this workspace.
+              </p>
+              <p v-else class="workspace-stub-hint">Pick a file from the tree to start editing.</p>
+            </div>
+          </div>
+        </main>
+      </template>
+    </Splitter>
+
+    <main v-else class="detail-editor">
+      <template v-if="activeFile">
+        <header class="editor-toolbar">
+          <div class="editor-title-row">
+            <v-icon class="editor-file-icon" icon="mdi-file-code-outline" size="24" />
+            <div class="editor-title-group">
+              <p class="editor-title">{{ activeFile.path }}</p>
+              <span class="muted">{{ workspace.imageRef }}</span>
+            </div>
+          </div>
+          <div class="editor-toolbar-meta">
+            <v-chip
+              v-if="presenceList.length"
+              size="small"
+              variant="tonal"
+              prepend-icon="mdi-account-multiple-outline"
+            >
+              {{ presenceList.length }} online
+            </v-chip>
+          </div>
+        </header>
+
+        <v-alert v-if="error" type="error" density="comfortable" variant="tonal" class="error-banner">
+          {{ error }}
+        </v-alert>
+
+        <div class="editor-host-wrapper">
+          <CodeEditor :file="activeFile" :access-token="accessToken" :user="currentUser" />
+        </div>
+      </template>
+      <div v-else class="workspace-stub">
+        <div class="workspace-stub-card">
+          <v-icon
+            :icon="filePath ? 'mdi-file-question-outline' : 'mdi-folder-multiple-outline'"
+            size="48"
+            class="workspace-stub-icon"
+          />
+          <h1 class="workspace-stub-title">{{ workspace.name }}</h1>
+          <p class="workspace-stub-subtitle">{{ workspace.imageRef }}</p>
+          <p v-if="filePath" class="workspace-stub-hint workspace-stub-hint--warn">
+            <v-icon icon="mdi-alert-circle-outline" size="16" class="me-1" />
+            File <code>{{ filePath }}</code> not found in this workspace.
+          </p>
+          <p v-else class="workspace-stub-hint">Pick a file from the tree to start editing.</p>
+        </div>
+      </div>
+    </main>
 
     <v-dialog :model-value="!!createDialog" max-width="420" @update:model-value="(value) => !value && (createDialog = null)">
       <v-card v-if="createDialog" rounded="xl">
@@ -477,36 +622,6 @@ onBeforeUnmount(disposePresence)
         </v-card-actions>
       </v-card>
     </v-dialog>
-
-    <main class="detail-editor">
-      <header class="editor-toolbar">
-        <div class="editor-title-row">
-          <v-icon class="editor-file-icon" icon="mdi-file-code-outline" size="24" />
-          <div class="editor-title-group">
-            <p class="editor-title">{{ activeFile?.path ?? "No file selected" }}</p>
-            <span class="muted">{{ workspace.imageRef }}</span>
-          </div>
-        </div>
-        <div class="editor-toolbar-meta">
-          <v-chip
-            v-if="presenceList.length"
-            size="small"
-            variant="tonal"
-            prepend-icon="mdi-account-multiple-outline"
-          >
-            {{ presenceList.length }} online
-          </v-chip>
-        </div>
-      </header>
-
-      <v-alert v-if="error" type="error" density="comfortable" variant="tonal" class="error-banner">
-        {{ error }}
-      </v-alert>
-
-      <div class="editor-host-wrapper">
-        <CodeEditor :file="activeFile" :access-token="accessToken" :user="currentUser" />
-      </div>
-    </main>
   </section>
 
   <section v-else class="detail-empty">
@@ -520,21 +635,21 @@ onBeforeUnmount(disposePresence)
 
 <style scoped>
 .detail-page {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 0;
+  display: flex;
   height: 100%;
   min-height: 0;
+  min-width: 0;
 }
 
-@media (max-width: 960px) {
-  .detail-page {
-    grid-template-columns: 1fr;
-  }
+.detail-split {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 .detail-sidebar {
   display: flex;
+  height: 100%;
   flex-direction: column;
   gap: 0;
   padding: 10px 14px 0;
@@ -811,9 +926,12 @@ onBeforeUnmount(disposePresence)
 }
 
 .detail-editor {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  height: 100%;
 }
 
 .editor-toolbar {
@@ -850,6 +968,69 @@ onBeforeUnmount(disposePresence)
 .muted {
   font-size: 12px;
   color: var(--md-sys-color-on-surface-variant);
+}
+
+.workspace-stub {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: var(--md-sys-color-surface-container-lowest);
+}
+
+.workspace-stub-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px 36px;
+  max-width: 460px;
+  text-align: center;
+  border-radius: var(--md-sys-shape-large);
+  background: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.workspace-stub-icon {
+  color: var(--md-sys-color-primary);
+  margin-bottom: 4px;
+}
+
+.workspace-stub-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--md-sys-color-on-surface);
+}
+
+.workspace-stub-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.workspace-stub-hint {
+  margin: 12px 0 0;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.workspace-stub-hint code {
+  font-family: 'Monaspace Neon', 'JetBrains Mono', monospace;
+  font-weight: 500;
+  padding: 1px 6px;
+  margin: 0 4px;
+  border-radius: 6px;
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+}
+
+.workspace-stub-hint--warn {
+  color: var(--md-sys-color-error);
 }
 
 .editor-host-wrapper {

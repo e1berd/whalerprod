@@ -6,7 +6,6 @@ import AuthView from "@/components/AuthView.vue"
 import { initSession, signOut, teardownSession, useSession } from "@/lib/session"
 import {
   applyDocumentTheme,
-  effectiveThemeLabel,
   effectiveThemeName,
   initializeThemePreference,
   teardownTheme
@@ -46,21 +45,10 @@ watch(
   </main>
   <AuthView v-else-if="!session" :notice="authNotice" />
   <v-app v-else class="app-shell">
-    <v-app-bar :height="mdAndUp ? 72 : 64" flat class="app-bar">
-      <v-app-bar-title>
-        <div class="app-bar-titleblock">
-          <div class="brand-mark">W</div>
-          <div class="app-title-copy">
-            <span class="app-title-text">Whaler</span>
-            <span class="app-page-title">Realtime sandbox editor</span>
-          </div>
-        </div>
-      </v-app-bar-title>
+    <v-app-bar :height="mdAndUp ? 64 : 56" flat class="app-bar">
+      <div id="app-bar-context" class="app-bar-context" />
       <v-spacer />
       <div class="app-bar-actions">
-        <v-chip class="theme-chip" size="small" variant="tonal" prepend-icon="mdi-palette-outline">
-          {{ effectiveThemeLabel }}
-        </v-chip>
         <v-chip class="user-chip" size="small" variant="tonal">
           <template #prepend>
             <span class="user-chip-avatar" :style="{ backgroundColor: currentUser.color }">
@@ -70,40 +58,48 @@ watch(
           </template>
           {{ currentUser.name }}
         </v-chip>
-        <v-btn icon="mdi-logout" variant="text" title="Sign out" @click="signOut" />
       </div>
     </v-app-bar>
 
-    <v-navigation-drawer :width="mdAndUp ? 88 : 72" permanent class="navigation-rail">
+    <v-navigation-drawer :width="mdAndUp ? 64 : 56" permanent class="navigation-rail">
       <div class="nav-rail-content">
-        <div class="nav-rail-items">
-          <nav>
-            <v-btn
-              class="nav-rail-button"
-              icon="mdi-view-dashboard-outline"
-              variant="text"
-              title="Workspaces"
-              @click="router.push('home')"
-            />
-          </nav>
-          <nav>
-            <v-btn
-              class="nav-rail-button"
-              icon="mdi-plus-box-outline"
-              variant="text"
-              title="New workspace"
-              @click="router.push('workspace-create')"
-            />
-          </nav>
-          <nav>
-            <v-btn
-              class="nav-rail-button"
-              icon="mdi-cog-outline"
-              variant="text"
-              title="Settings"
-              @click="router.push('settings')"
-            />
-          </nav>
+        <div class="nav-rail-items nav-rail-items--top">
+          <v-tooltip location="right" text="Workspaces">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="nav-rail-button"
+                icon="mdi-view-dashboard-outline"
+                variant="text"
+                @click="router.push('home')"
+              />
+            </template>
+          </v-tooltip>
+          <v-tooltip location="right" text="Settings">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="nav-rail-button"
+                icon="mdi-cog-outline"
+                variant="text"
+                @click="router.push('settings')"
+              />
+            </template>
+          </v-tooltip>
+        </div>
+        <div class="nav-rail-items nav-rail-items--bottom">
+          <v-tooltip location="right" text="Sign out">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="nav-rail-button nav-rail-button--danger"
+                icon="mdi-logout"
+                variant="text"
+                color="error"
+                @click="signOut"
+              />
+            </template>
+          </v-tooltip>
         </div>
       </div>
     </v-navigation-drawer>
@@ -115,15 +111,36 @@ watch(
 </template>
 
 <style scoped>
-.nav-rail-items {
+.app-bar-context {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  margin-inline-start: 8px;
+}
+
+.nav-rail-content {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  width: min-content;
-  margin-inline: auto;
+  height: 100%;
+  padding: 8px 0;
+}
+
+.nav-rail-items {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding-top: 16px;
+  gap: 6px;
+}
+
+.nav-rail-button {
+  width: 44px !important;
+  height: 44px !important;
+}
+
+.nav-rail-button--danger :deep(.v-icon) {
+  color: rgb(var(--v-theme-error));
 }
 
 .user-chip-avatar {

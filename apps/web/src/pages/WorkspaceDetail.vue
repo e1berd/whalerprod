@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "@kitbag/router"
 import { useDisplay } from "vuetify"
 import { HocuspocusProvider } from "@hocuspocus/provider"
@@ -7,6 +7,7 @@ import * as Y from "yjs"
 import type { AwarenessUser, FileLocation } from "@whaler/shared"
 import CodeEditor from "@/components/CodeEditor.vue"
 import FileTree from "@/components/FileTree.vue"
+import Splitter from "@/components/Splitter.vue"
 import { collabUrl } from "@/lib/config"
 import { client, handleUnauthorizedResponse, useSession } from "@/lib/session"
 
@@ -79,6 +80,19 @@ const presenceList = computed(() => {
     seen.add(entry.user.id)
     return true
   })
+})
+
+function presenceLabel(entry: PresenceEntry): string {
+  return entry.location?.path ? `${entry.user.name} • ${entry.location.path}` : entry.user.name
+}
+
+const micMuted = ref(false)
+const deafened = ref(false)
+const voiceConnected = ref(false)
+
+const appBarReady = ref(false)
+onMounted(() => {
+  appBarReady.value = !!document.getElementById("app-bar-context")
 })
 
 async function loadWorkspace() {
@@ -288,12 +302,18 @@ onBeforeUnmount(disposePresence)
   </section>
 
   <section v-else-if="workspace" class="detail-page">
-    <aside v-if="mdAndUp" class="detail-sidebar">
-      <header class="detail-sidebar-header">
-        <v-btn icon="mdi-arrow-left" variant="text" size="small" title="Back" @click="router.push('home')" />
-        <div class="detail-sidebar-title">
-          <span class="workspace-name">{{ workspace.name }}</span>
-          <span class="workspace-image">{{ workspace.imageRef }}</span>
+    <Teleport to="#app-bar-context" :disabled="!appBarReady">
+      <div class="workspace-context">
+        <v-btn
+          icon="mdi-arrow-left"
+          variant="text"
+          density="comfortable"
+          title="Back"
+          @click="router.push('home')"
+        />
+        <div class="workspace-context-text">
+          <span class="workspace-context-title">{{ workspace.name }}</span>
+          <span class="workspace-context-subtitle">{{ workspace.imageRef }}</span>
         </div>
         <v-chip
           class="status-chip"
@@ -304,58 +324,127 @@ onBeforeUnmount(disposePresence)
         >
           {{ workspace.containerStatus }}
         </v-chip>
-      </header>
-
-      <div class="detail-sidebar-section">
-        <span class="section-label">In the room</span>
-        <div class="presence-list">
-          <div v-for="entry in presenceList" :key="entry.user.id" class="presence-row" :title="entry.location?.path ?? 'Idle'">
-            <span class="presence-avatar" :style="{ backgroundColor: entry.user.color }">
-              <img v-if="entry.user.avatarUrl" :src="entry.user.avatarUrl" :alt="entry.user.name" />
-              <template v-else>{{ entry.user.name.charAt(0).toUpperCase() }}</template>
-            </span>
-            <div class="presence-text">
-              <span class="presence-name">{{ entry.user.name }}</span>
-              <span class="presence-path">{{ entry.location?.path ?? "Idle" }}</span>
-            </div>
-          </div>
-          <div v-if="!presenceList.length" class="presence-empty">Nobody else here yet.</div>
-        </div>
       </div>
+    </Teleport>
 
-      <div class="detail-sidebar-section detail-files-section">
-        <div class="section-heading">
-          <span class="section-label">Files</span>
-          <div class="section-heading-actions">
-            <v-chip size="x-small" variant="tonal">{{ files.length }}</v-chip>
-            <v-btn
-              icon="mdi-file-plus-outline"
-              variant="text"
-              size="x-small"
-              density="comfortable"
-              title="New file"
-              @click="openCreateDialog('', 'file')"
+    <aside v-if="mdAndUp" class="detail-sidebar">
+      <Splitter direction="vertical" :initial="65" :min="25" :max="85" storage-key="whaler.sidebar-split">
+        <template #start>
+          <section class="sidebar-panel sidebar-panel--files">
+            <header class="panel-heading">
+              <span class="panel-title">Files</span>
+              <div class="panel-heading-actions">
+                <v-chip size="x-small" variant="tonal">{{ files.length }}</v-chip>
+                <v-btn
+                  icon="mdi-file-plus-outline"
+                  variant="text"
+                  size="x-small"
+                  density="comfortable"
+                  title="New file"
+                  @click="openCreateDialog('', 'file')"
+                />
+                <v-btn
+                  icon="mdi-folder-plus-outline"
+                  variant="text"
+                  size="x-small"
+                  density="comfortable"
+                  title="New folder"
+                  @click="openCreateDialog('', 'directory')"
+                />
+              </div>
+            </header>
+            <FileTree
+              :files="files"
+              :active-file-id="activeFile?.id ?? null"
+              :locations="presence"
+              @open="activeFile = $event"
+              @rename="renameFile"
+              @remove="deleteFile"
+              @create-in="openCreateDialog"
             />
-            <v-btn
-              icon="mdi-folder-plus-outline"
-              variant="text"
-              size="x-small"
-              density="comfortable"
-              title="New folder"
-              @click="openCreateDialog('', 'directory')"
-            />
+          </section>
+        </template>
+
+        <template #end>
+          <section class="sidebar-panel sidebar-panel--members">
+            <header class="panel-heading">
+              <span class="panel-title">Online — {{ presenceList.length }}</span>
+            </header>
+            <ul class="member-list">
+              <li v-for="entry in presenceList" :key="entry.user.id" class="member-row" :title="presenceLabel(entry)">
+                <div class="member-avatar-wrap">
+                  <span class="member-avatar" :style="{ backgroundColor: entry.user.color }">
+                    <img v-if="entry.user.avatarUrl" :src="entry.user.avatarUrl" :alt="entry.user.name" />
+                    <template v-else>{{ entry.user.name.charAt(0).toUpperCase() }}</template>
+                  </span>
+                  <span class="member-status-dot" />
+                </div>
+                <div class="member-text">
+                  <span class="member-name">{{ entry.user.name }}</span>
+                  <span class="member-activity">{{ entry.location?.path ?? "Idle" }}</span>
+                </div>
+              </li>
+              <li v-if="!presenceList.length" class="member-empty">No one else is here.</li>
+            </ul>
+          </section>
+        </template>
+      </Splitter>
+
+      <footer class="voice-bar">
+        <div class="voice-bar-identity">
+          <span class="voice-bar-avatar" :style="{ backgroundColor: currentUser.color }">
+            <img v-if="currentUser.avatarUrl" :src="currentUser.avatarUrl" :alt="currentUser.name" />
+            <template v-else>{{ currentUser.name.charAt(0).toUpperCase() }}</template>
+          </span>
+          <div class="voice-bar-text">
+            <span class="voice-bar-name">{{ currentUser.name }}</span>
+            <span class="voice-bar-state">{{ voiceConnected ? "Voice ready" : "Voice idle" }}</span>
           </div>
         </div>
-        <FileTree
-          :files="files"
-          :active-file-id="activeFile?.id ?? null"
-          :locations="presence"
-          @open="activeFile = $event"
-          @rename="renameFile"
-          @remove="deleteFile"
-          @create-in="openCreateDialog"
-        />
-      </div>
+        <div class="voice-bar-actions">
+          <v-tooltip location="top" :text="micMuted ? 'Unmute' : 'Mute'">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="voice-btn"
+                :class="{ 'voice-btn--muted': micMuted }"
+                :icon="micMuted ? 'mdi-microphone-off' : 'mdi-microphone'"
+                variant="text"
+                density="comfortable"
+                size="small"
+                @click="micMuted = !micMuted"
+              />
+            </template>
+          </v-tooltip>
+          <v-tooltip location="top" :text="deafened ? 'Undeafen' : 'Deafen'">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="voice-btn"
+                :class="{ 'voice-btn--muted': deafened }"
+                :icon="deafened ? 'mdi-headphones-off' : 'mdi-headphones'"
+                variant="text"
+                density="comfortable"
+                size="small"
+                @click="deafened = !deafened"
+              />
+            </template>
+          </v-tooltip>
+          <v-tooltip location="top" text="Audio settings">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                class="voice-btn"
+                icon="mdi-cog-outline"
+                variant="text"
+                density="comfortable"
+                size="small"
+                @click="router.push('settings')"
+              />
+            </template>
+          </v-tooltip>
+        </div>
+      </footer>
     </aside>
 
     <v-dialog :model-value="!!createDialog" max-width="420" @update:model-value="(value) => !value && (createDialog = null)">
@@ -447,35 +536,40 @@ onBeforeUnmount(disposePresence)
 .detail-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 18px;
+  gap: 0;
+  padding: 10px 14px 0;
   background: var(--md-sys-color-surface-container-low);
   border-right: 1px solid var(--md-sys-color-outline-variant);
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-.detail-sidebar-header {
+.workspace-context {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
 }
 
-.detail-sidebar-title {
-  flex: 1;
-  min-width: 0;
+.workspace-context-text {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
 }
 
-.workspace-name {
-  font-weight: 600;
+.workspace-context-title {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--md-sys-color-on-surface);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.workspace-image {
+.workspace-context-subtitle {
   font-size: 12px;
   color: var(--md-sys-color-on-surface-variant);
   white-space: nowrap;
@@ -514,51 +608,122 @@ onBeforeUnmount(disposePresence)
   gap: 4px;
 }
 
-.presence-list {
+.sidebar-panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.sidebar-panel--files {
   gap: 6px;
 }
 
-.presence-row {
+.sidebar-panel--members {
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 6px;
+}
+
+.panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.panel-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.member-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.member-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--md-sys-color-surface-container);
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: default;
+  min-height: 38px;
+  transition: background 120ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.presence-avatar {
-  width: 28px;
-  height: 28px;
+.member-row:hover {
+  background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent);
+}
+
+.member-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.member-avatar {
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   border-radius: 50%;
   overflow: hidden;
   color: #fff;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
 }
 
-.presence-avatar img {
+.member-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.presence-text {
+.member-status-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #4ade80;
+  border: 2px solid var(--md-sys-color-surface-container-low);
+  box-sizing: content-box;
+}
+
+.member-text {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  line-height: 1.2;
 }
 
-.presence-name {
-  font-weight: 600;
+.member-name {
   font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--md-sys-color-on-surface);
 }
 
-.presence-path {
+.member-activity {
   font-size: 11px;
   color: var(--md-sys-color-on-surface-variant);
   white-space: nowrap;
@@ -566,10 +731,83 @@ onBeforeUnmount(disposePresence)
   text-overflow: ellipsis;
 }
 
-.presence-empty {
+.member-empty {
+  list-style: none;
   font-size: 12px;
   color: var(--md-sys-color-on-surface-variant);
-  padding: 6px 10px;
+  padding: 8px 8px;
+}
+
+.voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -14px;
+  padding: 8px 12px;
+  background: var(--md-sys-color-surface-container);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.voice-bar-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.voice-bar-avatar {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  overflow: hidden;
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.voice-bar-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.voice-bar-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.voice-bar-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--md-sys-color-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.voice-bar-state {
+  font-size: 11px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.voice-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.voice-btn {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.voice-btn--muted {
+  color: rgb(var(--v-theme-error));
 }
 
 .detail-editor {

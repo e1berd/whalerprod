@@ -1,6 +1,6 @@
 import type { types } from "mediasoup"
 import { env } from "./env"
-import { audioCodecs, pickWorker } from "./worker"
+import { audioCodecs, listWorkers } from "./worker"
 
 type Router = types.Router
 type WebRtcTransport = types.WebRtcTransport
@@ -17,6 +17,7 @@ export type Peer = {
   displayName: string
   micMuted: boolean
   deafened: boolean
+  routerIndex: number
   socketSend: (payload: unknown) => void
   transports: Map<string, WebRtcTransport>
   producers: Map<string, Producer>
@@ -28,12 +29,16 @@ const pending = new Map<string, Promise<Room>>()
 
 export class Room {
   readonly id: string
-  readonly router: Router
+  readonly routers: Router[]
   readonly peers = new Map<string, Peer>()
+  private nextPeerRouter = 0
+  // producerId -> routerIndex -> piped Producer on that router
+  private readonly pipedProducers = new Map<string, Map<number, Producer>>()
+  private readonly inflightPipes = new Map<string, Promise<Producer>>()
 
-  constructor(id: string, router: Router) {
+  constructor(id: string, routers: Router[]) {
     this.id = id
-    this.router = router
+    this.routers = routers
   }
 
   static async getOrCreate(workspaceId: string): Promise<Room> {
@@ -43,9 +48,11 @@ export class Room {
     if (inflight) return inflight
 
     const promise = (async () => {
-      const worker = pickWorker()
-      const router = await worker.createRouter({ mediaCodecs: audioCodecs })
-      const room = new Room(workspaceId, router)
+      const workers = listWorkers()
+      const routers = await Promise.all(
+        workers.map((worker) => worker.createRouter({ mediaCodecs: audioCodecs }))
+      )
+      const room = new Room(workspaceId, routers)
       rooms.set(workspaceId, room)
       return room
     })()
@@ -55,6 +62,18 @@ export class Room {
     } finally {
       pending.delete(workspaceId)
     }
+  }
+
+  assignRouter(): number {
+    const index = this.nextPeerRouter % this.routers.length
+    this.nextPeerRouter++
+    return index
+  }
+
+  routerFor(peer: Peer): Router {
+    const router = this.routers[peer.routerIndex]
+    if (!router) throw new Error("Router missing for peer")
+    return router
   }
 
   addPeer(peer: Peer): void {
@@ -69,7 +88,7 @@ export class Room {
     for (const transport of peer.transports.values()) transport.close()
     this.peers.delete(peerId)
     if (this.peers.size === 0) {
-      this.router.close()
+      for (const router of this.routers) router.close()
       rooms.delete(this.id)
     }
   }
@@ -86,7 +105,7 @@ export class Room {
     if (env.mediasoup.announcedIp) listenInfo.announcedAddress = env.mediasoup.announcedIp
     const tcpInfo: typeof listenInfo = { ...listenInfo, protocol: "tcp" }
 
-    const transport = await this.router.createWebRtcTransport({
+    const transport = await this.routerFor(peer).createWebRtcTransport({
       listenInfos: [listenInfo, tcpInfo],
       enableUdp: true,
       enableTcp: true,
@@ -124,17 +143,21 @@ export class Room {
 
   async consume(
     peer: Peer,
-    producer: Producer,
+    producerId: string,
     transportId: string,
     rtpCapabilities: RtpCapabilities
   ): Promise<Consumer | null> {
-    if (!this.router.canConsume({ producerId: producer.id, rtpCapabilities })) {
+    const localProducer = await this.getProducerOnRouter(producerId, peer.routerIndex)
+    if (!localProducer) return null
+
+    const router = this.routerFor(peer)
+    if (!router.canConsume({ producerId: localProducer.id, rtpCapabilities })) {
       return null
     }
     const transport = peer.transports.get(transportId)
     if (!transport) throw new Error("Recv transport not found")
     const consumer = await transport.consume({
-      producerId: producer.id,
+      producerId: localProducer.id,
       rtpCapabilities,
       paused: true
     })
@@ -158,6 +181,61 @@ export class Room {
     for (const peer of this.peers.values()) {
       if (peer.id === except) continue
       peer.socketSend(message)
+    }
+  }
+
+  // Returns a Producer object that lives on `routerIndex`. If the source
+  // producer already lives there, returns it as-is. Otherwise pipes it
+  // across worker boundaries via mediasoup.pipeToRouter and caches the
+  // result so subsequent consumers on the same router reuse the pipe.
+  private async getProducerOnRouter(
+    producerId: string,
+    routerIndex: number
+  ): Promise<Producer | null> {
+    const owner = this.findProducerOwner(producerId)
+    if (!owner) return null
+    const original = owner.producers.get(producerId)
+    if (!original) return null
+    if (owner.routerIndex === routerIndex) return original
+
+    const cached = this.pipedProducers.get(producerId)?.get(routerIndex)
+    if (cached) return cached
+
+    const key = `${producerId}:${routerIndex}`
+    const inflight = this.inflightPipes.get(key)
+    if (inflight) return inflight
+
+    const srcRouter = this.routers[owner.routerIndex]
+    const dstRouter = this.routers[routerIndex]
+    if (!srcRouter || !dstRouter) throw new Error("Router index out of range")
+
+    const promise = (async () => {
+      const { pipeProducer } = await srcRouter.pipeToRouter({
+        producerId,
+        router: dstRouter
+      })
+      if (!pipeProducer) throw new Error("pipeToRouter returned no producer")
+
+      let byRouter = this.pipedProducers.get(producerId)
+      if (!byRouter) {
+        byRouter = new Map()
+        this.pipedProducers.set(producerId, byRouter)
+      }
+      byRouter.set(routerIndex, pipeProducer)
+
+      pipeProducer.observer.on("close", () => {
+        byRouter!.delete(routerIndex)
+        if (byRouter!.size === 0) this.pipedProducers.delete(producerId)
+      })
+
+      return pipeProducer
+    })()
+
+    this.inflightPipes.set(key, promise)
+    try {
+      return await promise
+    } finally {
+      this.inflightPipes.delete(key)
     }
   }
 }

@@ -110,6 +110,7 @@ async function handleConnection(socket: WebSocket, context: SocketContext): Prom
     displayName: context.user.email ?? context.user.id,
     micMuted: true,
     deafened: true,
+    routerIndex: room.assignRouter(),
     socketSend: send,
     transports: new Map(),
     producers: new Map(),
@@ -130,7 +131,7 @@ async function handleConnection(socket: WebSocket, context: SocketContext): Prom
   send({
     type: "welcome",
     selfPeerId: peerId,
-    rtpCapabilities: room.router.rtpCapabilities,
+    rtpCapabilities: room.routerFor(peer).rtpCapabilities,
     peers: existingPeers
   })
 
@@ -227,9 +228,7 @@ async function handleRequest(request: Request, peer: Peer, room: Room): Promise<
       const rtpCapabilities = data["rtpCapabilities"] as RtpCapabilities
       const owner = room.findProducerOwner(producerId)
       if (!owner) throw new Error("Producer not found")
-      const producer = owner.producers.get(producerId)
-      if (!producer) throw new Error("Producer not found")
-      const consumer = await room.consume(peer, producer, transportId, rtpCapabilities)
+      const consumer = await room.consume(peer, producerId, transportId, rtpCapabilities)
       if (!consumer) {
         reply({ skipped: true })
         return

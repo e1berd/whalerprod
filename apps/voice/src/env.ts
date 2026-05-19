@@ -1,4 +1,4 @@
-import { networkInterfaces } from "node:os"
+import { cpus, networkInterfaces } from "node:os"
 
 function required(name: string): string {
   const value = process.env[name]
@@ -46,6 +46,6 @@ export const env = {
     announcedIp,
     rtcMinPort: parsePort(process.env.MEDIASOUP_RTC_MIN_PORT, 40000),
     rtcMaxPort: parsePort(process.env.MEDIASOUP_RTC_MAX_PORT, 40100),
-    workerCount: parsePort(process.env.MEDIASOUP_WORKERS, 1)
+    workerCount: parsePort(process.env.MEDIASOUP_WORKERS, Math.max(1, cpus().length))
   }
 }

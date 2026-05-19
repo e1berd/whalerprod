@@ -44,3 +44,8 @@ export function pickWorker(): Worker {
   if (!worker) throw new Error("Mediasoup worker not initialized")
   return worker
 }
+
+export function listWorkers(): Worker[] {
+  if (workers.length === 0) throw new Error("Mediasoup workers not initialized")
+  return workers
+}

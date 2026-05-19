@@ -379,9 +379,15 @@ async function onMediaPrepareConfirm(payload: { inputDeviceId: string | null; ou
 
 const sidebarSplitPercent = ref(65)
 const membersCollapsed = computed(() => sidebarSplitPercent.value >= 92)
+const previewSplitPercent = ref(60)
+const previewCollapsed = computed(() => previewSplitPercent.value >= 98)
 
 function onSidebarSplitChange(value: number) {
   sidebarSplitPercent.value = value
+}
+
+function onPreviewSplitChange(value: number) {
+  previewSplitPercent.value = value
 }
 
 const appBarReady = ref(false)
@@ -837,47 +843,63 @@ onBeforeUnmount(() => {
             {{ error }}
           </v-alert>
 
-          <div class="editor-preview-body">
-            <section class="editor-column">
-              <div v-if="activeFile" class="editor-host-wrapper">
-                <CodeEditor
-                  ref="codeEditorRef"
-                  :file="activeFile"
-                  :access-token="accessToken"
-                  :user="currentUser"
-                  :accent-color="followedEditorColor"
-                  :follow-location="followedLocation"
-                  @scroll-change="handleEditorScroll"
-                />
-              </div>
-              <div v-else class="workspace-stub">
-                <div class="workspace-stub-card">
-                  <div class="workspace-stub-mark">
-                    <v-icon
-                      :icon="filePath ? 'mdi-file-question-outline' : 'mdi-folder-multiple-outline'"
-                      size="32"
-                    />
-                  </div>
-                  <h1 class="workspace-stub-title">{{ workspace.name }}</h1>
-                  <p class="workspace-stub-subtitle">{{ workspace.imageRef }}</p>
-                  <p v-if="filePath" class="workspace-stub-hint workspace-stub-hint--warn">
-                    <v-icon icon="mdi-alert-circle-outline" size="16" class="me-1" />
-                    File <code>{{ filePath }}</code> not found in this workspace.
-                  </p>
-                  <p v-else class="workspace-stub-hint">Pick a file from the tree to start editing.</p>
+          <Splitter
+            direction="horizontal"
+            :initial="60"
+            :min="35"
+            :max="99"
+            storage-key="whaler.preview-split"
+            class="editor-preview-body"
+            @update:percent="onPreviewSplitChange"
+          >
+            <template #start>
+              <section class="editor-column">
+                <div v-if="activeFile" class="editor-host-wrapper">
+                  <CodeEditor
+                    ref="codeEditorRef"
+                    :file="activeFile"
+                    :access-token="accessToken"
+                    :user="currentUser"
+                    :accent-color="followedEditorColor"
+                    :follow-location="followedLocation"
+                    @scroll-change="handleEditorScroll"
+                  />
                 </div>
-              </div>
-            </section>
+                <div v-else class="workspace-stub">
+                  <div class="workspace-stub-card">
+                    <div class="workspace-stub-mark">
+                      <v-icon
+                        :icon="filePath ? 'mdi-file-question-outline' : 'mdi-folder-multiple-outline'"
+                        size="32"
+                      />
+                    </div>
+                    <h1 class="workspace-stub-title">{{ workspace.name }}</h1>
+                    <p class="workspace-stub-subtitle">{{ workspace.imageRef }}</p>
+                    <p v-if="filePath" class="workspace-stub-hint workspace-stub-hint--warn">
+                      <v-icon icon="mdi-alert-circle-outline" size="16" class="me-1" />
+                      File <code>{{ filePath }}</code> not found in this workspace.
+                    </p>
+                    <p v-else class="workspace-stub-hint">Pick a file from the tree to start editing.</p>
+                  </div>
+                </div>
+              </section>
+            </template>
 
-            <PreviewPanel
-              v-model:mode="previewMode"
-              :preview="preview"
-              :loading="previewLoading"
-              :error="previewError"
-              @run="startPreview"
-              @refresh="startPreview"
-            />
-          </div>
+            <template #end>
+              <div class="preview-split-pane" :class="{ 'preview-split-pane--collapsed': previewCollapsed }">
+                <PreviewPanel
+                  v-if="!previewCollapsed"
+                  v-model:mode="previewMode"
+                  :preview="preview"
+                  :loading="previewLoading"
+                  :error="previewError"
+                  @run="startPreview"
+                  @refresh="startPreview"
+                />
+                <div v-else class="preview-collapse-rail" aria-hidden="true" />
+              </div>
+            </template>
+          </Splitter>
         </main>
       </template>
     </Splitter>
@@ -1408,6 +1430,8 @@ onBeforeUnmount(() => {
 .editor-host-wrapper {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   display: flex;
 }
 
@@ -1415,15 +1439,47 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 40%);
+  display: flex;
 }
 
 .editor-column {
+  flex: 1;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.preview-split-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.preview-split-pane :deep(.preview-panel) {
+  flex: 1;
+  width: 100%;
+}
+
+.preview-split-pane--collapsed {
+  min-width: 0;
+  background: var(--md-sys-color-surface-container);
+  border-left: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.preview-collapse-rail {
+  width: 100%;
+  min-width: 0;
+  background:
+    linear-gradient(
+      180deg,
+      transparent,
+      color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent),
+      transparent
+    ),
+    var(--md-sys-color-surface-container);
 }
 
 .detail-loading,

@@ -7,6 +7,7 @@ import {
   createContainer,
   proxyPreviewRequest,
   putWorkspaceEntry,
+  readPreviewLog,
   runTerminalPreview,
   startWebPreview
 } from "./docker"
@@ -79,6 +80,18 @@ app.post("/internal/previews", zValidator("json", previewSchema), async (c) => {
 
   const result = await runTerminalPreview(body)
   return c.json(result)
+})
+
+app.get("/internal/workspaces/:workspaceId/previews/:previewId/log", async (c) => {
+  const workspaceId = c.req.param("workspaceId")
+  const previewId = c.req.param("previewId")
+  try {
+    const output = await readPreviewLog({ workspaceId, previewId })
+    return c.json({ output })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown"
+    throw new HTTPException(404, { message: `Preview log unavailable: ${message}` })
+  }
 })
 
 app.all("*", async (c) => proxyPreviewRequest(c.req.raw))

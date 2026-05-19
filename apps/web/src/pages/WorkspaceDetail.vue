@@ -69,8 +69,15 @@ const createDialog = ref<{ parent: string; kind: "file" | "directory"; name: str
 const submittingCreate = ref(false)
 const previewMode = ref<PreviewMode>("web")
 const previewLoading = ref(false)
-const preview = ref<WorkspacePreview | null>(null)
+const webPreview = ref<WorkspacePreview | null>(null)
+const terminalPreview = ref<WorkspacePreview | null>(null)
 const previewError = ref<string | null>(null)
+const logStreaming = ref(false)
+let logTimer: number | null = null
+
+const preview = computed<WorkspacePreview | null>(() =>
+  previewMode.value === "web" ? webPreview.value : terminalPreview.value
+)
 const codeEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null)
 let lastTreeRevision = 0
 
@@ -196,6 +203,7 @@ async function startPreview(): Promise<void> {
   if (!workspaceId.value) return
   previewLoading.value = true
   previewError.value = null
+  const mode = previewMode.value
   try {
     if (activeFile.value && codeEditorRef.value) {
       const saveResponse = await client().v1.files[":fileId"].$put({
@@ -212,7 +220,7 @@ async function startPreview(): Promise<void> {
     const response = await client().v1.workspaces[":workspaceId"].previews.$post({
       param: { workspaceId: workspaceId.value },
       json: {
-        type: previewMode.value,
+        type: mode,
         activePath: activeFile.value?.path ?? null
       }
     })
@@ -222,11 +230,65 @@ async function startPreview(): Promise<void> {
       return
     }
     const payload = (await response.json()) as { preview: WorkspacePreview }
-    preview.value = payload.preview
+    if (mode === "web") {
+      webPreview.value = payload.preview
+      if (previewMode.value === "terminal") void fetchWebPreviewLog()
+    } else {
+      terminalPreview.value = payload.preview
+    }
   } finally {
     previewLoading.value = false
   }
 }
+
+async function fetchWebPreviewLog(): Promise<void> {
+  const current = webPreview.value
+  if (!current || !workspaceId.value) return
+  try {
+    const response = await client().v1.workspaces[":workspaceId"].previews[":previewId"].log.$get({
+      param: { workspaceId: workspaceId.value, previewId: current.id }
+    })
+    if (!response.ok) return
+    const payload = (await response.json()) as { output: string }
+    // Surface logs as a synthetic terminal preview keyed to the web preview's id
+    // so user sees live dev server output under the Terminal tab.
+    terminalPreview.value = {
+      id: `web-log:${current.id}`,
+      type: "terminal",
+      host: current.host,
+      url: current.url,
+      command: `tail ${current.command}`,
+      status: "running",
+      output: payload.output || "Dev server started. Waiting for output…"
+    }
+  } catch {
+    // ignore transient errors during polling
+  }
+}
+
+function stopLogPolling(): void {
+  if (logTimer !== null) {
+    window.clearInterval(logTimer)
+    logTimer = null
+  }
+  logStreaming.value = false
+}
+
+function startLogPolling(): void {
+  stopLogPolling()
+  if (!webPreview.value) return
+  logStreaming.value = true
+  void fetchWebPreviewLog()
+  logTimer = window.setInterval(() => void fetchWebPreviewLog(), 1500)
+}
+
+watch([previewMode, webPreview], ([mode, web]) => {
+  if (mode === "terminal" && web) {
+    startLogPolling()
+  } else {
+    stopLogPolling()
+  }
+})
 
 async function onMediaPrepareConfirm(payload: { inputDeviceId: string | null; outputDeviceId: string | null }): Promise<void> {
   voice.setInputDevice(payload.inputDeviceId)
@@ -459,7 +521,10 @@ watch(currentUser, () => presenceProvider?.setAwarenessField("user", currentUser
 
 if (workspaceId.value) void loadWorkspace()
 
-onBeforeUnmount(disposePresence)
+onBeforeUnmount(() => {
+  disposePresence()
+  stopLogPolling()
+})
 </script>
 
 <template>

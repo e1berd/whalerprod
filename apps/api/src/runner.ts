@@ -84,6 +84,26 @@ export async function mirrorWorkspaceEntry(input: {
   }
 }
 
+export async function readWorkspacePreviewLog(input: {
+  workspaceId: string
+  previewId: string
+}): Promise<string | null> {
+  const response = await runnerFetch(
+    `/internal/workspaces/${input.workspaceId}/previews/${input.previewId}/log`,
+    { method: "GET" }
+  )
+
+  if (!response) return null
+  if (response.status === 404) return ""
+  if (!response.ok) {
+    const body = await response.text()
+    throw new RunnerRequestError(`Runner failed to read preview log: ${body}`, response.status, body)
+  }
+
+  const payload = (await response.json()) as { output: string }
+  return payload.output
+}
+
 export async function startWorkspacePreview(input: {
   workspaceId: string
   previewId: string

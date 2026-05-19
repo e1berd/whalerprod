@@ -80,9 +80,56 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function waitForPreview(input: { ip: string; port: number; timeoutMs: number }): Promise<void> {
+/**
+ * Run a shell script inside a workspace container and capture combined output.
+ * Uses plain `sh -c` (no login flag) — `sh -lc` can fail on minimal Alpine bases.
+ */
+async function execCapture(input: {
+  workspaceId: string
+  script: string
+  workingDir?: string
+  env?: string[]
+}): Promise<{ output: string; exitCode: number | null }> {
+  const container = docker.getContainer(containerName(input.workspaceId))
+  const exec = await container.exec({
+    Cmd: ["sh", "-c", input.script],
+    WorkingDir: input.workingDir ?? "/workspace",
+    Env: input.env,
+    AttachStdout: true,
+    AttachStderr: true
+  })
+  const stream = await exec.start({})
+  const chunks: Buffer[] = []
+  await new Promise<void>((resolve, reject) => {
+    const sink = new Writable({
+      write(chunk: Buffer, _enc, cb) {
+        chunks.push(Buffer.from(chunk))
+        cb()
+      }
+    })
+    docker.modem.demuxStream(stream, sink, sink)
+    stream.on("end", () => resolve())
+    stream.on("error", reject)
+  })
+  const inspect = await exec.inspect().catch(() => null)
+  return {
+    output: Buffer.concat(chunks).toString("utf8"),
+    exitCode: inspect?.ExitCode ?? null
+  }
+}
+
+async function waitForPreview(input: {
+  ip: string
+  port: number
+  timeoutMs: number
+  workspaceId: string
+  previewId: string
+  pidPath: string
+  logPath: string
+}): Promise<void> {
   const deadline = Date.now() + input.timeoutMs
   let lastError: unknown
+  let iterations = 0
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`http://${input.ip}:${input.port}/`, {
@@ -93,14 +140,54 @@ async function waitForPreview(input: { ip: string; port: number; timeoutMs: numb
     } catch (error) {
       lastError = error
     }
+
+    // Cheap liveness probe every couple of cycles — if the spawned process
+    // exited (bad command, missing binary, port collision, etc.) there's no
+    // point waiting the full timeout. Fast-fail with the diagnostic.
+    iterations += 1
+    if (iterations >= 3 && iterations % 3 === 0) {
+      const liveness = await execCapture({
+        workspaceId: input.workspaceId,
+        script: `if [ -f ${shellQuote(input.pidPath)} ] && kill -0 $(cat ${shellQuote(input.pidPath)}) 2>/dev/null; then echo alive; else echo dead; fi`
+      }).catch(() => null)
+      if (liveness?.output.trim() === "dead") {
+        break
+      }
+    }
+
     await sleep(500)
   }
 
-  throw new Error(
-    `Preview did not start on ${input.ip}:${input.port}: ${
-      lastError instanceof Error ? lastError.message : "timeout"
-    }`
-  )
+  // Dump every piece of state that's useful for diagnosing why the spawn never
+  // produced a listening server: process list, PID file, log tail, listening
+  // sockets, and workspace contents. Returned as a single string so the error
+  // travels back to the UI intact.
+  const diagScript = [
+    `echo "=== pid file (${input.pidPath}) ==="`,
+    `[ -f ${shellQuote(input.pidPath)} ] && cat ${shellQuote(input.pidPath)} || echo "(missing)"`,
+    `echo`,
+    `echo "=== log file (${input.logPath}, last 2k) ==="`,
+    `[ -f ${shellQuote(input.logPath)} ] && tail -c 2048 ${shellQuote(input.logPath)} || echo "(missing)"`,
+    `echo`,
+    `echo "=== running processes ==="`,
+    `(ps -ef 2>/dev/null || ps aux 2>/dev/null || ps 2>/dev/null) | head -40 || echo "(no ps)"`,
+    `echo`,
+    `echo "=== listening sockets ==="`,
+    `(ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | head -20 || echo "(no ss/netstat)"`,
+    `echo`,
+    `echo "=== workspace contents ==="`,
+    `ls -la /workspace 2>&1 | head -40 || true`
+  ].join("\n")
+
+  let diag = "(no diagnostics)"
+  try {
+    const result = await execCapture({ workspaceId: input.workspaceId, script: diagScript })
+    diag = result.output.trim() || diag
+  } catch (error) {
+    diag = `(diagnostics failed: ${error instanceof Error ? error.message : "unknown"})`
+  }
+  const reason = lastError instanceof Error ? lastError.message : "timeout"
+  throw new Error(`Preview did not start on ${input.ip}:${input.port}: ${reason}\n${diag}`)
 }
 
 async function ensureContainerNetwork(workspaceId: string): Promise<string> {
@@ -220,23 +307,44 @@ export async function startWebPreview(input: {
   const pidPath = `/tmp/whaler-preview-web.pid`
   const logPath = `/tmp/whaler-preview-${input.previewId}.log`
   const command = commandWithPort(input.command, input.port)
+  // The container was just restarted, so /tmp is fresh and nothing is running
+  // besides PID 1's `sleep infinity` — no need to hunt for leftover processes
+  // (and a `ps | awk '/php -S/'` pattern would match our own `sh -c` argv,
+  // SIGTERM the running script, and exit with code 143 before the spawn).
+  //
+  // `nohup ... &` detaches the child so it survives the exec returning. We
+  // also write a small header to the log so an empty log is distinguishable
+  // from "the script never ran at all", and probe liveness 1s later so a
+  // fail-fast (`command not found`, port collision, etc.) is captured.
   const script = [
-    `if [ -f ${pidPath} ]; then kill -TERM -- "-$(cat ${pidPath})" 2>/dev/null || kill "$(cat ${pidPath})" 2>/dev/null || true; fi`,
-    `if command -v ps >/dev/null 2>&1; then ps -eo pid=,args= | awk '/[v]ite|[n]pm run dev|[n]pm run preview|[p]hp -S|[p]ython -m http.server|[b]un .*dev|[d]eno task dev/ {print $1}' | xargs -r kill 2>/dev/null || true; fi`,
-    `rm -f ${pidPath}`,
-    `PORT=${input.port} WHALER_PREVIEW_ID=${shellQuote(input.previewId)} setsid sh -lc ${shellQuote(command)} > ${shellQuote(logPath)} 2>&1 &`,
-    `echo $! > ${pidPath}`
+    `set +e`,
+    `printf '[whaler] starting: %s\\n[whaler] pwd=%s\\n' ${shellQuote(command)} "$(pwd)" > ${shellQuote(logPath)}`,
+    `PORT=${input.port} WHALER_PREVIEW_ID=${shellQuote(input.previewId)} nohup sh -c ${shellQuote(command)} >> ${shellQuote(logPath)} 2>&1 < /dev/null &`,
+    `printf '%s' "$!" > ${pidPath}`,
+    `sleep 1`,
+    `printf '[whaler] spawn-pid=%s alive=%s\\n' "$(cat ${pidPath} 2>/dev/null)" "$(kill -0 $(cat ${pidPath} 2>/dev/null) 2>/dev/null && echo yes || echo no)" >> ${shellQuote(logPath)}`
   ].join("\n")
 
-  const exec = await container.exec({
-    Cmd: ["sh", "-lc", script],
-    WorkingDir: "/workspace",
-    AttachStdout: true,
-    AttachStderr: true
+  const result = await execCapture({
+    workspaceId: input.workspaceId,
+    script
   })
-  await exec.start({})
+  if (result.exitCode && result.exitCode !== 0) {
+    throw new Error(
+      `Preview spawn exited with code ${result.exitCode}: ${result.output.trim() || "(no output)"}`
+    )
+  }
+
   previewTargets.set(input.standHost, { ip, port: input.port })
-  await waitForPreview({ ip, port: input.port, timeoutMs: 30_000 })
+  await waitForPreview({
+    ip,
+    port: input.port,
+    timeoutMs: 30_000,
+    workspaceId: input.workspaceId,
+    previewId: input.previewId,
+    pidPath,
+    logPath
+  })
 
   return {
     status: "running" as const,
@@ -244,18 +352,48 @@ export async function startWebPreview(input: {
   }
 }
 
-// We don't proxy WebSockets to the sandbox, so silence Vite's HMR client by
-// returning a no-op JS module. This avoids the "failed to connect to websocket"
-// warnings and the fallback ws://localhost:<port> attempts that browsers log.
+// We don't proxy WebSockets to the sandbox, so we replace Vite's HMR client
+// with a minimal shim that:
+//   1. silences the "failed to connect to websocket" warnings (no WS),
+//   2. implements updateStyle/removeStyle so CSS imports still inject <style>
+//      tags into the document (otherwise stylesheets silently disappear),
+//   3. returns no-op hot contexts so `import.meta.hot.*` calls don't throw.
 const VITE_HMR_NOOP_SCRIPT = `
-export const createHotContext = () => ({
+const sheetsMap = new Map();
+let lastInsertedStyle;
+
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.setAttribute("type", "text/css");
+    style.setAttribute("data-vite-dev-id", id);
+    document.head.appendChild(style);
+    if (lastInsertedStyle && style.previousSibling !== lastInsertedStyle) {
+      document.head.insertBefore(style, lastInsertedStyle.nextSibling);
+    }
+    lastInsertedStyle = style;
+  }
+  style.textContent = content;
+  sheetsMap.set(id, style);
+}
+
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    style.remove();
+    sheetsMap.delete(id);
+  }
+}
+
+const noopHotContext = {
   accept() {}, acceptExports() {}, dispose() {}, prune() {},
   decline() {}, invalidate() {},
   on() {}, off() {}, send() {}, data: {}
-});
-export const updateStyle = () => {};
-export const removeStyle = () => {};
+};
+export const createHotContext = () => noopHotContext;
 export const injectQuery = (url) => url;
+export const ErrorOverlay = class {};
 `
 
 const VITE_CLIENT_PATHS = new Set(["/@vite/client", "/@vite/env"])
@@ -330,47 +468,35 @@ export async function proxyPreviewRequest(request: Request): Promise<Response> {
   }
 }
 
+export async function readPreviewLog(input: {
+  workspaceId: string
+  previewId: string
+  maxBytes?: number | undefined
+}): Promise<string> {
+  const maxBytes = input.maxBytes ?? 64_000
+  const logPath = `/tmp/whaler-preview-${input.previewId}.log`
+  const result = await execCapture({
+    workspaceId: input.workspaceId,
+    script: `[ -f ${shellQuote(logPath)} ] && tail -c ${maxBytes} ${shellQuote(logPath)} || true`
+  })
+  return result.output
+}
+
 export async function runTerminalPreview(input: {
   workspaceId: string
   command: string
   port: number
   activePath?: string | undefined
 }) {
-  const container = docker.getContainer(containerName(input.workspaceId))
   const command = commandWithPort(input.command, input.port)
-  const exec = await container.exec({
-    Cmd: ["sh", "-lc", command],
-    WorkingDir: "/workspace",
-    Env: [`PORT=${input.port}`, `FILE=${input.activePath ?? ""}`],
-    AttachStdout: true,
-    AttachStderr: true
+  const result = await execCapture({
+    workspaceId: input.workspaceId,
+    script: command,
+    env: [`PORT=${input.port}`, `FILE=${input.activePath ?? ""}`]
   })
-  const stream = await exec.start({})
-  const chunks: Buffer[] = []
-
-  await new Promise<void>((resolve, reject) => {
-    const stdout = new Writable({
-      write(chunk: Buffer) {
-        chunks.push(Buffer.from(chunk))
-        return true
-      }
-    })
-    const stderr = new Writable({
-      write(chunk: Buffer) {
-        chunks.push(Buffer.from(chunk))
-        return true
-      }
-    })
-
-    docker.modem.demuxStream(stream, stdout, stderr)
-    stream.on("end", resolve)
-    stream.on("error", reject)
-  })
-
-  const inspect = await exec.inspect()
   return {
-    exitCode: inspect.ExitCode ?? null,
-    output: Buffer.concat(chunks).toString("utf8").slice(-40_000)
+    exitCode: result.exitCode,
+    output: result.output.slice(-40_000)
   }
 }
 

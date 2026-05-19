@@ -4,6 +4,7 @@ import { css } from "@codemirror/lang-css"
 import { html } from "@codemirror/lang-html"
 import { javascript } from "@codemirror/lang-javascript"
 import { json } from "@codemirror/lang-json"
+import { php } from "@codemirror/lang-php"
 import { python } from "@codemirror/lang-python"
 import { Compartment, EditorState } from "@codemirror/state"
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view"
@@ -56,10 +57,13 @@ function languageExtension(language: string | null, path: string) {
   if (language === "javascript") return javascript()
   if (language === "json") return json()
   if (language === "python") return python()
+  if (language === "php") return php()
   if (language === "html") return html()
   if (language === "css") return css()
   if (path.endsWith(".ts")) return javascript({ typescript: true })
   if (path.endsWith(".js")) return javascript()
+  if (path.endsWith(".py")) return python()
+  if (path.endsWith(".php")) return php()
   return []
 }
 

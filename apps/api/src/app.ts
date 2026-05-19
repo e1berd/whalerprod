@@ -10,7 +10,13 @@ import { getSandboxImage, SANDBOX_IMAGES } from "@whaler/shared"
 import { requireAuth } from "./auth"
 import { db } from "./db"
 import { env } from "./env"
-import { createSandboxContainer, mirrorWorkspaceEntry, RunnerRequestError, startWorkspacePreview } from "./runner"
+import {
+  createSandboxContainer,
+  mirrorWorkspaceEntry,
+  readWorkspacePreviewLog,
+  RunnerRequestError,
+  startWorkspacePreview
+} from "./runner"
 import {
   assertFileAccess,
   assertWorkspaceAccess,
@@ -471,6 +477,14 @@ const routes = app
         ...runnerResult
       }
     })
+  })
+  .get("/v1/workspaces/:workspaceId/previews/:previewId/log", async (c) => {
+    const user = c.get("user")
+    const workspaceId = c.req.param("workspaceId")
+    const previewId = c.req.param("previewId")
+    await assertWorkspaceAccess(workspaceId, user)
+    const output = await readWorkspacePreviewLog({ workspaceId, previewId })
+    return c.json({ output: output ?? "" })
   })
   .post("/v1/workspaces/:workspaceId/files", zValidator("json", createFileSchema), async (c) => {
     const user = c.get("user")

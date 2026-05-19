@@ -25,7 +25,7 @@ export const SANDBOX_IMAGES = [
     defaultFiles: [
       {
         path: "index.js",
-        content: `console.log("Hello from Whaler")\n`
+        content: `import { createServer } from "node:http"\n\nconst port = Number(process.env.PORT ?? 4173)\n\ncreateServer((_req, res) => {\n  res.writeHead(200, { "content-type": "text/html; charset=utf-8" })\n  res.end("<h1>Whaler Node preview</h1><p>Edit <code>index.js</code> and press Run.</p>")\n}).listen(port, "0.0.0.0", () => {\n  console.log(\`Listening on \${port}\`)\n})\n`
       },
       {
         path: "package.json",
@@ -33,7 +33,10 @@ export const SANDBOX_IMAGES = [
       }
     ],
     preview: {
-      webCommand: "if [ -f package.json ] && grep -q 'vite' package.json; then printf 'import { defineConfig } from \"vite\"\\nexport default defineConfig({ server: { hmr: false } })\\n' > vite.config.whaler-preview.js && npm install && npx vite --host 0.0.0.0 --port ${PORT} --strictPort --config vite.config.whaler-preview.js; elif [ -f index.html ]; then npx --yes vite --host 0.0.0.0 --port ${PORT} --strictPort; else node --version && python3 -m http.server ${PORT} --bind 0.0.0.0; fi",
+      // Fallbacks no longer depend on python3 (not in node:bookworm-slim).
+      // Order: vite project → static index.html via `npx serve` → plain node index.js.
+      webCommand:
+        "if [ -f package.json ] && grep -q '\"vite\"' package.json; then printf 'import { defineConfig } from \"vite\"\\nexport default defineConfig({ server: { hmr: false } })\\n' > vite.config.whaler-preview.js && npm install && npx vite --host 0.0.0.0 --port ${PORT} --strictPort --config vite.config.whaler-preview.js; elif [ -f index.html ] && [ ! -f index.js ]; then npx --yes serve -l ${PORT} -s .; elif [ -f index.js ]; then node index.js; else echo 'No entrypoint found (expected index.js, index.html, or a vite project)' >&2; exit 1; fi",
       terminalCommand: "if [ -n \"$FILE\" ]; then node \"$FILE\"; elif [ -f package.json ]; then npm install && npm run start; else node --version && ls -la; fi",
       port: 4173
     }
@@ -210,9 +213,21 @@ export const SANDBOX_IMAGES = [
     image: "python:3.13-slim",
     description: "Python scripts and small services",
     languages: ["python", "toml", "yaml", "json"],
+    defaultFiles: [
+      {
+        path: "main.py",
+        content: `import os\nfrom http.server import HTTPServer, BaseHTTPRequestHandler\n\nclass Handler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        self.send_response(200)\n        self.send_header("content-type", "text/html; charset=utf-8")\n        self.end_headers()\n        self.wfile.write(b"<h1>Whaler Python preview</h1><p>Edit <code>main.py</code> and press Run.</p>")\n\nport = int(os.environ.get("PORT", 4173))\nprint(f"Listening on {port}")\nHTTPServer(("0.0.0.0", port), Handler).serve_forever()\n`
+      },
+      {
+        path: "index.html",
+        content: `<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>Whaler Python preview</title></head>\n<body><h1>Whaler Python preview</h1><p>Static fallback. Run <code>main.py</code> for the dynamic server.</p></body></html>\n`
+      }
+    ],
     preview: {
-      webCommand: "python -m http.server ${PORT} --bind 0.0.0.0",
-      terminalCommand: "python --version && find . -maxdepth 2 -type f",
+      // Prefer a `main.py` server if present so users see live Python output;
+      // otherwise fall back to the built-in static file server.
+      webCommand: "if [ -f main.py ]; then python main.py; else python -m http.server ${PORT} --bind 0.0.0.0; fi",
+      terminalCommand: "if [ -n \"$FILE\" ]; then python \"$FILE\"; else python --version && find . -maxdepth 2 -type f; fi",
       port: 4173
     }
   },
@@ -222,9 +237,22 @@ export const SANDBOX_IMAGES = [
     image: "oven/bun:1.2",
     description: "Bun runtime and package tooling",
     languages: ["typescript", "javascript", "json"],
+    defaultFiles: [
+      {
+        path: "package.json",
+        content: `{\n  "type": "module",\n  "scripts": {\n    "dev": "bun run index.ts"\n  }\n}\n`
+      },
+      {
+        path: "index.ts",
+        content: `const port = Number(process.env.PORT ?? 4173)\n\nBun.serve({\n  port,\n  hostname: "0.0.0.0",\n  fetch: () =>\n    new Response("<h1>Whaler Bun preview</h1><p>Edit <code>index.ts</code> and press Run.</p>", {\n      headers: { "content-type": "text/html; charset=utf-8" }\n    })\n})\n\nconsole.log(\`Listening on \${port}\`)\n`
+      }
+    ],
     preview: {
-      webCommand: "bun install && bun run dev --host 0.0.0.0 --port ${PORT}",
-      terminalCommand: "bun install && bun run build",
+      // Use `bun run index.ts` directly so PORT env works; skip --host/--port
+      // CLI flags which would be forwarded as argv to a script that doesn't
+      // parse them.
+      webCommand: "if [ -f package.json ]; then bun install --silent 2>/dev/null || true; fi; if [ -f index.ts ]; then bun run index.ts; elif [ -f index.js ]; then bun run index.js; else echo 'No index.ts/index.js found' >&2; exit 1; fi",
+      terminalCommand: "if [ -n \"$FILE\" ]; then bun run \"$FILE\"; elif [ -f package.json ]; then bun install && bun run build 2>/dev/null || bun --version; else bun --version && ls -la; fi",
       port: 4173
     }
   },
@@ -234,9 +262,23 @@ export const SANDBOX_IMAGES = [
     image: "denoland/deno:2.3.5",
     description: "Deno runtime with TypeScript-first workflow",
     languages: ["typescript", "javascript", "json"],
+    defaultFiles: [
+      {
+        path: "deno.json",
+        content: `{\n  "tasks": {\n    "dev": "deno run --allow-net --allow-read --allow-env main.ts"\n  }\n}\n`
+      },
+      {
+        path: "main.ts",
+        content: `const port = Number(Deno.env.get("PORT") ?? 4173)\n\nDeno.serve({ port, hostname: "0.0.0.0" }, () =>\n  new Response(\n    "<h1>Whaler Deno preview</h1><p>Edit <code>main.ts</code> and press Run.</p>",\n    { headers: { "content-type": "text/html; charset=utf-8" } }\n  )\n)\n\nconsole.log(\`Listening on \${port}\`)\n`
+      }
+    ],
     preview: {
-      webCommand: "deno task dev --host 0.0.0.0 --port ${PORT}",
-      terminalCommand: "deno task build || deno check .",
+      // Try the user's `dev` task first; fall back to running main.ts directly
+      // (so a deleted deno.json doesn't break preview), then to a static server.
+      webCommand:
+        "if [ -f deno.json ] || [ -f deno.jsonc ]; then deno task dev; elif [ -f main.ts ]; then deno run --allow-net --allow-read --allow-env main.ts; elif [ -f index.ts ]; then deno run --allow-net --allow-read --allow-env index.ts; else deno run --allow-net --allow-read jsr:@std/http/file-server --host 0.0.0.0 --port ${PORT}; fi",
+      terminalCommand:
+        "if [ -n \"$FILE\" ]; then deno run --allow-all \"$FILE\"; elif [ -f deno.json ] || [ -f deno.jsonc ]; then deno task build 2>/dev/null || deno check .; else deno --version && ls -la; fi",
       port: 4173
     }
   }

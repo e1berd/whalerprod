@@ -113,7 +113,7 @@ const exitLabel = computed(() => {
     </header>
 
     <v-alert v-if="error" type="error" density="compact" variant="tonal" class="preview-error">
-      {{ error }}
+      <pre class="preview-error-text">{{ error }}</pre>
     </v-alert>
 
     <div class="preview-stage">
@@ -295,6 +295,15 @@ const exitLabel = computed(() => {
 .preview-error {
   margin: 10px 12px 0;
   border-radius: var(--md-sys-shape-medium);
+}
+
+.preview-error-text {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 11.5px/1.5 "Monaspace Neon", "JetBrains Mono", monospace;
 }
 
 .preview-stage {

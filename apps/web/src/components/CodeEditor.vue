@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue"
 import { css } from "@codemirror/lang-css"
 import { html } from "@codemirror/lang-html"
 import { javascript } from "@codemirror/lang-javascript"
@@ -32,6 +32,8 @@ type RemoteCursor = {
   color: string
 }
 
+type EditorSyncState = "idle" | "connecting" | "connected" | "synced" | "error"
+
 const props = defineProps<{
   file: WorkspaceFile | null
   accessToken: string
@@ -47,6 +49,15 @@ const emit = defineEmits<{
 const host = ref<HTMLElement | null>(null)
 const view = shallowRef<EditorView | null>(null)
 const remoteCursors = ref<RemoteCursor[]>([])
+const syncState = ref<EditorSyncState>("idle")
+
+const syncStatusText = computed(() => {
+  if (syncState.value === "error") return "Realtime unavailable. Retrying..."
+  if (syncState.value === "connected") return "Syncing document..."
+  return "Connecting to realtime..."
+})
+
+const showSyncOverlay = computed(() => Boolean(props.file) && syncState.value !== "idle" && syncState.value !== "synced")
 
 let provider: HocuspocusProvider | null = null
 let ydoc: Y.Doc | null = null
@@ -155,6 +166,7 @@ function dispose() {
   provider = null
   ydoc = null
   remoteCursors.value = []
+  syncState.value = "idle"
 }
 
 function getContent(): string {
@@ -170,11 +182,22 @@ async function mountEditor() {
   }
 
   ydoc = new Y.Doc()
+  syncState.value = "connecting"
   provider = new HocuspocusProvider({
     url: collabUrl(),
     name: `file:${props.file.id}`,
     document: ydoc,
-    token: props.accessToken
+    token: props.accessToken,
+    onStatus: ({ status }: { status: string }) => {
+      if (status === "connected") syncState.value = "connected"
+      else if (status === "disconnected") syncState.value = "connecting"
+    },
+    onSynced: ({ state }: { state: boolean }) => {
+      syncState.value = state ? "synced" : "connected"
+    },
+    onAuthenticationFailed: () => {
+      syncState.value = "error"
+    }
   })
 
   provider.setAwarenessField("user", props.user)
@@ -257,6 +280,12 @@ defineExpose({
     :style="{ '--editor-accent-color': accentColor ?? 'transparent' }"
   >
     <div ref="host" class="editor-host" />
+    <div v-if="showSyncOverlay" class="editor-sync-overlay">
+      <div class="editor-sync-pill">
+        <v-progress-circular indeterminate size="20" width="2" />
+        <span>{{ syncStatusText }}</span>
+      </div>
+    </div>
     <template v-if="view">
       <RemoteCursorLabel
         v-for="cursor in remoteCursors"
@@ -289,5 +318,33 @@ defineExpose({
 .editor-host {
   position: absolute;
   inset: 0;
+}
+
+.editor-sync-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 78%, transparent);
+}
+
+.editor-sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  max-width: min(320px, calc(100% - 32px));
+  padding: 0 14px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.14);
+  border-radius: 8px;
+  color: rgb(var(--v-theme-on-surface));
+  background: rgb(var(--v-theme-surface));
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: normal;
 }
 </style>

@@ -7,7 +7,54 @@ install:
     pnpm install
 
 dev: supabase-start sandbox-up turn-up
-    pnpm dev
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    pids=()
+
+    cleanup() {
+      trap - INT TERM EXIT
+      if [ "${#pids[@]}" -gt 0 ]; then
+        kill "${pids[@]}" >/dev/null 2>&1 || true
+        wait "${pids[@]}" >/dev/null 2>&1 || true
+      fi
+    }
+
+    wait_for_port() {
+      local name="$1"
+      local host="$2"
+      local port="$3"
+
+      for _ in $(seq 1 80); do
+        if (echo >"/dev/tcp/${host}/${port}") >/dev/null 2>&1; then
+          return 0
+        fi
+        sleep 0.25
+      done
+
+      echo "Timed out waiting for ${name} on ${host}:${port}" >&2
+      return 1
+    }
+
+    trap cleanup INT TERM EXIT
+
+    pnpm -r --parallel \
+      --filter @whaler/api \
+      --filter @whaler/collab \
+      --filter @whaler/runner \
+      --filter @whaler/voice \
+      dev &
+    pids+=("$!")
+
+    wait_for_port api 127.0.0.1 3000
+    wait_for_port collab 127.0.0.1 3001
+    wait_for_port runner 127.0.0.1 3002
+    wait_for_port voice 127.0.0.1 3003
+
+    pnpm -r --parallel --filter @whaler/web dev &
+    pids+=("$!")
+
+    wait -n "${pids[@]}"
 
 sandbox-up: sandbox-network sandbox-images
 

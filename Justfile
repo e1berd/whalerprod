@@ -91,24 +91,27 @@ stand-cert:
     set -a
     . ./.env
     set +a
-    : "${LEGO_DNS_PROVIDER:?LEGO_DNS_PROVIDER is required in .env}"
+    : "${ACME_DNS_PROVIDER:?ACME_DNS_PROVIDER is required in .env}"
     : "${CADDY_ACME_EMAIL:?CADDY_ACME_EMAIL is required in .env}"
     : "${STAND_BASE_DOMAIN_DOCKER:?STAND_BASE_DOMAIN_DOCKER is required in .env}"
-    lego_image="${LEGO_IMAGE:-goacme/lego:v4.27.0}"
-    mkdir -p storage/lego
+    acme_image="${ACME_IMAGE:-neilpang/acme.sh:3.1.4}"
+    env_file="$(mktemp)"
+    trap 'rm -f "$env_file"' EXIT
+    env > "$env_file"
+    mkdir -p storage/acme
     docker run --rm \
-      --env-file .env \
-      -v "$PWD/storage/lego:/lego-data" \
-      "$lego_image" \
-      --path /lego-data \
-      --email "$CADDY_ACME_EMAIL" \
-      --accept-tos \
-      --dns "$LEGO_DNS_PROVIDER" \
+      --env-file "$env_file" \
+      -v "$PWD/storage/acme:/acme-data" \
+      "$acme_image" \
+      --issue \
+      --server letsencrypt \
+      --dns "$ACME_DNS_PROVIDER" \
       -d "*.${STAND_BASE_DOMAIN_DOCKER}" \
-      run
+      --accountemail "$CADDY_ACME_EMAIL" \
+      --home /acme-data
     echo
     echo "Add this to .env before starting Caddy:"
-    echo "STAND_TLS_DIRECTIVE=\"tls /lego-data/certificates/_.${STAND_BASE_DOMAIN_DOCKER}.crt /lego-data/certificates/_.${STAND_BASE_DOMAIN_DOCKER}.key\""
+    echo "STAND_TLS_DIRECTIVE=\"tls /acme-data/*.${STAND_BASE_DOMAIN_DOCKER}_ecc/fullchain.cer /acme-data/*.${STAND_BASE_DOMAIN_DOCKER}_ecc/*.${STAND_BASE_DOMAIN_DOCKER}.key\""
 
 stand-cert-renew:
     #!/usr/bin/env bash
@@ -120,21 +123,24 @@ stand-cert-renew:
     set -a
     . ./.env
     set +a
-    : "${LEGO_DNS_PROVIDER:?LEGO_DNS_PROVIDER is required in .env}"
+    : "${ACME_DNS_PROVIDER:?ACME_DNS_PROVIDER is required in .env}"
     : "${CADDY_ACME_EMAIL:?CADDY_ACME_EMAIL is required in .env}"
     : "${STAND_BASE_DOMAIN_DOCKER:?STAND_BASE_DOMAIN_DOCKER is required in .env}"
-    lego_image="${LEGO_IMAGE:-goacme/lego:v4.27.0}"
-    mkdir -p storage/lego
+    acme_image="${ACME_IMAGE:-neilpang/acme.sh:3.1.4}"
+    env_file="$(mktemp)"
+    trap 'rm -f "$env_file"' EXIT
+    env > "$env_file"
+    mkdir -p storage/acme
     docker run --rm \
-      --env-file .env \
-      -v "$PWD/storage/lego:/lego-data" \
-      "$lego_image" \
-      --path /lego-data \
-      --email "$CADDY_ACME_EMAIL" \
-      --accept-tos \
-      --dns "$LEGO_DNS_PROVIDER" \
+      --env-file "$env_file" \
+      -v "$PWD/storage/acme:/acme-data" \
+      "$acme_image" \
+      --renew \
+      --server letsencrypt \
+      --dns "$ACME_DNS_PROVIDER" \
       -d "*.${STAND_BASE_DOMAIN_DOCKER}" \
-      renew --days 30
+      --accountemail "$CADDY_ACME_EMAIL" \
+      --home /acme-data
     if docker compose ps -q caddy >/dev/null 2>&1; then
       docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
     fi

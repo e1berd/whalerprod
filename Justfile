@@ -99,9 +99,9 @@ beget-stand-cert:
     docker run --rm \
       -e BEGET_USERNAME \
       -e BEGET_PASSWORD \
-      -v "$PWD/storage/lego:/lego" \
-      goacme/lego:latest \
-      --path /lego \
+      -v "$PWD/storage/lego:/lego-data" \
+      goacme/lego:v4.27.0 \
+      --path /lego-data \
       --email "$CADDY_ACME_EMAIL" \
       --accept-tos \
       --dns beget \
@@ -109,7 +109,7 @@ beget-stand-cert:
       run
     echo
     echo "Add this to .env before starting Caddy:"
-    echo "STAND_TLS_DIRECTIVE=tls /lego/certificates/_.${STAND_BASE_DOMAIN_DOCKER}.crt /lego/certificates/_.${STAND_BASE_DOMAIN_DOCKER}.key"
+    echo "STAND_TLS_DIRECTIVE=\"tls /lego-data/certificates/_.${STAND_BASE_DOMAIN_DOCKER}.crt /lego-data/certificates/_.${STAND_BASE_DOMAIN_DOCKER}.key\""
 
 beget-stand-cert-renew:
     #!/usr/bin/env bash
@@ -129,9 +129,9 @@ beget-stand-cert-renew:
     docker run --rm \
       -e BEGET_USERNAME \
       -e BEGET_PASSWORD \
-      -v "$PWD/storage/lego:/lego" \
-      goacme/lego:latest \
-      --path /lego \
+      -v "$PWD/storage/lego:/lego-data" \
+      goacme/lego:v4.27.0 \
+      --path /lego-data \
       --email "$CADDY_ACME_EMAIL" \
       --accept-tos \
       --dns beget \

@@ -130,7 +130,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./storage/lego:/lego:ro
+      - ./storage/lego:/lego-data:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

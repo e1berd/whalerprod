@@ -1,136 +1,80 @@
 # Whaler
 
-Realtime browser code editor with self-hosted IAM, collaborative editing, and Docker-backed sandboxes.
+Whaler is a browser IDE where every workspace is backed by its own Docker
+container. The editor is realtime, but the runtime is real: files are persisted
+in Postgres, mirrored into the container filesystem, and preview commands run
+against the same `/workspace` tree that users are editing.
 
 ![Hero Block](./docs/readme_hero.png)
+
+## What Makes It Interesting
+
+- Workspace changes are not just UI state. File creates and updates are stored
+  in the database and immediately materialized inside the workspace container
+  via Docker archive writes.
+- Each workspace gets a long-lived sandbox container named from the workspace
+  id, with its own Docker volume mounted at `/workspace`.
+- Preview runs start from the container filesystem, restart the sandbox, spawn
+  the framework command, wait for the selected port, and then expose it through
+  a generated `*.stand` host.
+- The runner is an internal service with token-gated APIs. Public traffic never
+  talks to Docker directly.
+- Sandboxes are resource-limited with memory, CPU, PID limits,
+  `no-new-privileges`, dropped Linux capabilities, and an isolated preview
+  network.
+- Collaborative editing uses Yjs/Hocuspocus for document state, cursor,
+  selection, and workspace presence while the API keeps the canonical file tree
+  in Postgres.
+- Self-hosted Supabase provides Auth, Postgres, and Storage, so the app can run
+  without depending on a hosted identity or storage vendor.
+- Caddy terminates HTTPS, routes the app/API/collab/voice/Supabase subdomains,
+  and proxies dynamic preview hosts.
+
+## Runtime Model
+
+Whaler treats a workspace as two synchronized layers:
+
+1. The database stores workspace metadata, membership, the file tree, file
+   content, and CRDT document snapshots.
+2. The Docker sandbox holds the executable filesystem. On workspace creation,
+   default template files are copied into `/workspace`. On later file changes,
+   the API asks the runner to mirror the changed file or directory into the
+   container.
+
+When a user presses Run, the API ensures the sandbox exists, replays the current
+file tree into the container, and starts the configured preview command for the
+workspace image. For Vite-based templates, Whaler disables HMR WebSockets and
+serves a tiny compatibility shim so previews work cleanly through the sandbox
+proxy.
+
+That means the preview is not a static renderer and not a mocked execution
+environment. It is a real process running inside the same container that holds
+the workspace files.
 
 ## Stack
 
 - Vue + Vuetify 4 + CodeMirror 6
 - Hono + `hc` typed client
 - Yjs + Hocuspocus for realtime text, cursor, selection, and workspace presence
-- Supabase self-hosted Auth/Postgres
+- Supabase self-hosted Auth/Postgres/Storage
 - Drizzle ORM schema/migrations
 - Docker runner isolated behind an internal token
+- Docker volumes for per-workspace `/workspace` state
+- mediasoup + optional TURN for voice rooms
 - Caddy with HTTP/3
 
-## Local Development
+## Table of Contents
 
-1. Install dependencies:
+English:
 
-   ```bash
-   just install
-   ```
+- [Overview](./docs/en/README.md)
+- [Local development](./docs/en/DEVELOPMENT.md)
+- [Production deployment](./docs/en/DEPLOYMENT.md)
+- [Architecture](./docs/en/ARCHITECTURE.md)
 
-2. Start the full local dev stack:
+Русский:
 
-   ```bash
-   just dev
-   ```
-
-   `just dev` starts local Supabase, builds missing sandbox preview images,
-   starts TURN, and then runs the app services.
-
-3. If this is the first local run, copy `.env.example` to `.env`, then copy
-   the values from `just supabase-status` into `.env`. The app expects:
-
-   - `DATABASE_URL`
-   - `SUPABASE_JWT_SECRET`
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-   - `RUNNER_INTERNAL_TOKEN`
-
-4. Apply/reset local database:
-
-   ```bash
-   just supabase-reset
-   ```
-
-5. Individual services can still be run separately:
-
-   ```bash
-   just dev-api
-   just dev-collab
-   just dev-runner
-   just dev-web
-   ```
-
-The web app defaults to `http://localhost:5173`.
-
-## Production Domains
-
-Caddy is configured for separate subdomains:
-
-- `APP_DOMAIN=app.example.com`
-- `API_DOMAIN=api.example.com`
-- `COLLAB_DOMAIN=collab.example.com`
-- `VOICE_DOMAIN=voice.example.com`
-- `SUPABASE_DOMAIN=supabase.example.com`
-- `STAND_BASE_DOMAIN_DOCKER=stand.example.com`
-
-Create DNS `A` records for each subdomain pointing to the server public IPv4
-address. If IPv6 is enabled, also add matching `AAAA` records. Preview
-sandboxes require a wildcard record such as `*.stand.example.com`.
-
-Preview HTTPS also requires a wildcard certificate for `*.stand.example.com`.
-The stock `caddy:2.10-alpine` image cannot issue wildcard certificates with
-HTTP challenge; use a Caddy DNS plugin for your DNS provider or mount an
-externally issued wildcard certificate.
-
-Open these ports on the VDS firewall:
-
-- `80/tcp` for ACME HTTP challenge and redirects
-- `443/tcp` for HTTPS
-- `443/udp` for HTTP/3
-- `3478/tcp` and `3478/udp` if the bundled TURN profile is used
-- the configured mediasoup RTC range, default `40000-40100/tcp` and `40000-40100/udp`
-
-Do not expose Postgres or the Docker socket publicly.
-
-Set `CADDY_ACME_EMAIL` to a real email address before starting Caddy with
-public domains. ACME providers reject placeholder domains such as `example.com`.
-
-## Supabase Production Note
-
-`supabase init` is useful for local development. For production, run self-hosted Supabase as its own Docker Compose stack or service, then point Caddy's `SUPABASE_UPSTREAM` to its Kong/API gateway. Set Supabase Auth URLs to:
-
-- public API URL: `https://supabase.example.com`
-- site URL: `https://app.example.com`
-- allowed redirect URLs: `https://app.example.com`
-
-Email confirmation and password recovery are handled by Supabase Auth, not the
-Whaler API. Keep only the SMTP values the Auth service needs:
-
-```dotenv
-MAIL_HOST=smtp.example.com
-MAIL_PORT=465
-MAIL_USERNAME=no-reply@example.com
-MAIL_PASSWORD=replace-with-smtp-password
-MAIL_FROM_ADDRESS=no-reply@example.com
-MAIL_FROM_NAME=Whaler
-```
-
-Map those values into the self-hosted Supabase Auth container:
-
-```dotenv
-GOTRUE_SITE_URL=https://app.example.com
-GOTRUE_URI_ALLOW_LIST=https://app.example.com
-GOTRUE_EXTERNAL_EMAIL_ENABLED=true
-GOTRUE_MAILER_AUTOCONFIRM=false
-GOTRUE_SMTP_HOST=${MAIL_HOST}
-GOTRUE_SMTP_PORT=${MAIL_PORT}
-GOTRUE_SMTP_USER=${MAIL_USERNAME}
-GOTRUE_SMTP_PASS=${MAIL_PASSWORD}
-GOTRUE_SMTP_ADMIN_EMAIL=${MAIL_FROM_ADDRESS}
-GOTRUE_SMTP_SENDER_NAME=${MAIL_FROM_NAME}
-```
-
-## Verification
-
-```bash
-just typecheck
-just build
-docker compose config
-```
-
-For a full server checklist, see `docs/PRODUCTION.md`.
+- [Обзор](./docs/ru/README.md)
+- [Локальная разработка](./docs/ru/DEVELOPMENT.md)
+- [Production-деплой](./docs/ru/DEPLOYMENT.md)
+- [Архитектура](./docs/ru/ARCHITECTURE.md)

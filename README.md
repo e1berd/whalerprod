@@ -1,6 +1,6 @@
-# Whaler
+# WhalerProd
 
-Whaler is a browser IDE where every workspace is backed by its own Docker
+Whalerprod is a browser IDE where every workspace is backed by its own Docker
 container. The editor is realtime, but the runtime is real: files are persisted
 in Postgres, mirrored into the container filesystem, and preview commands run
 against the same `/workspace` tree that users are editing.
@@ -32,7 +32,7 @@ against the same `/workspace` tree that users are editing.
 
 ## Runtime Model
 
-Whaler treats a workspace as two synchronized layers:
+Whalerprod treats a workspace as two synchronized layers:
 
 1. The database stores workspace metadata, membership, the file tree, file
    content, and CRDT document snapshots.
@@ -43,7 +43,7 @@ Whaler treats a workspace as two synchronized layers:
 
 When a user presses Run, the API ensures the sandbox exists, replays the current
 file tree into the container, and starts the configured preview command for the
-workspace image. For Vite-based templates, Whaler disables HMR WebSockets and
+workspace image. For Vite-based templates, Whalerprod disables HMR WebSockets and
 serves a tiny compatibility shim so previews work cleanly through the sandbox
 proxy.
 

@@ -1,7 +1,7 @@
 # Production-деплой
 
 Эта инструкция описывает production-запуск на Linux VDS или выделенном сервере.
-Whaler запускается через Docker Compose, Caddy принимает публичный HTTPS-трафик,
+WhalerProd запускается через Docker Compose, Caddy принимает публичный HTTPS-трафик,
 а Supabase работает как отдельный self-hosted production stack или отдельный
 сервис.
 
@@ -67,7 +67,7 @@ GOTRUE_MAILER_AUTOCONFIRM=false
 ```
 
 Если Supabase Kong/API gateway слушает на том же сервере на `127.0.0.1:54321`,
-Whaler должен ходить к нему через Docker host gateway:
+WhalerProd должен ходить к нему через Docker host gateway:
 
 ```dotenv
 SUPABASE_UPSTREAM=host.docker.internal:54321
@@ -75,10 +75,10 @@ SUPABASE_URL_DOCKER=http://host.docker.internal:54321
 VITE_SUPABASE_URL=https://supabase.example.com
 ```
 
-Whaler ожидает, что доступны Supabase Auth, Postgres и Storage. Загрузка
+WhalerProd ожидает, что доступны Supabase Auth, Postgres и Storage. Загрузка
 аватарок работает через Supabase Storage.
 
-## Окружение Whaler
+## Окружение WhalerProd
 
 Создайте `.env` из `.env.example` и замените production-значения.
 
@@ -130,7 +130,7 @@ placeholder-домены вроде `example.com`.
 
 ## SMTP для Auth-писем
 
-Email confirmation и password recovery отправляет Supabase Auth, а не Whaler
+Email confirmation и password recovery отправляет Supabase Auth, а не WhalerProd
 API.
 
 Исходные SMTP-значения можно держать в `.env`:
@@ -141,7 +141,7 @@ MAIL_PORT=465
 MAIL_USERNAME=no-reply@example.com
 MAIL_PASSWORD=replace-with-smtp-password
 MAIL_FROM_ADDRESS=no-reply@example.com
-MAIL_FROM_NAME=Whaler
+MAIL_FROM_NAME=WhalerProd
 ```
 
 Прокиньте их в Supabase Auth container:
@@ -211,7 +211,7 @@ just sandbox-images
 docker compose config
 ```
 
-Запустите Whaler:
+Запустите WhalerProd:
 
 ```bash
 docker compose up -d --build
@@ -225,7 +225,7 @@ docker compose --profile turn up -d coturn
 
 ## Database migrations
 
-Запустите Whaler Drizzle migrations против production Postgres:
+Запустите WhalerProd Drizzle migrations против production Postgres:
 
 ```bash
 pnpm install

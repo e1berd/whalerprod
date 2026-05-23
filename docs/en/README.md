@@ -1,6 +1,6 @@
-# Whaler Documentation
+# WhalerProd Documentation
 
-Whaler is split into a few focused services: a Vue web app, an authenticated API,
+WhalerProd is split into a few focused services: a Vue web app, an authenticated API,
 a collaboration server, a voice server, and an internal Docker runner. Supabase
 provides Auth, Postgres, and Storage. Caddy routes the public domains and dynamic
 preview hosts.
@@ -10,13 +10,13 @@ preview hosts.
 - [Local development](./DEVELOPMENT.md): install dependencies, start Supabase,
   run the app, reset the local database, and work with individual services.
 - [Production deployment](./DEPLOYMENT.md): prepare a server, configure DNS,
-  run self-hosted Supabase, issue preview wildcard TLS, and launch Whaler.
+  run self-hosted Supabase, issue preview wildcard TLS, and launch WhalerProd.
 - [Architecture](./ARCHITECTURE.md): understand the workspace/container model,
   realtime collaboration, preview routing, and security boundaries.
 
 ## Runtime Summary
 
-Whaler stores workspace metadata and files in Postgres, then mirrors executable
+WhalerProd stores workspace metadata and files in Postgres, then mirrors executable
 workspace state into a Docker container mounted at `/workspace`. The browser
 editor talks to the API and collaboration server, while preview and terminal
 commands run inside the sandbox container through the internal runner.

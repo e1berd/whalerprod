@@ -24,7 +24,7 @@ const heading = computed(() => {
   return activeMode.value === "sign-in" ? "Welcome back" : "Create your account"
 })
 const supporting = computed(() => {
-  if (activeMode.value === "password-recovery") return "Choose a new password for your Whaler account."
+  if (activeMode.value === "password-recovery") return "Choose a new password for your WhalerProd account."
   if (activeMode.value === "forgot-password") return "Enter your email and we will send a recovery link."
   return activeMode.value === "sign-in"
     ? "Sign in to jump into a workspace and pick up where you left off."
@@ -110,7 +110,7 @@ async function submit() {
       </aside>
 
       <section class="auth-panel">
-        <p class="auth-eyebrow">Whaler</p>
+        <p class="auth-eyebrow">WhalerProd</p>
         <h2 class="auth-heading">{{ heading }}</h2>
         <p class="auth-supporting">{{ supporting }}</p>
 

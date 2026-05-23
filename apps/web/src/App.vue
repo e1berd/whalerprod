@@ -48,7 +48,7 @@ const activeKey = computed<"home" | "settings" | null>(() => {
   <main v-if="!authReady" class="boot-screen">
     <div class="boot-indicator">
       <div class="brand-mark">W</div>
-      <span>Loading Whaler</span>
+      <span>Loading WhalerProd</span>
     </div>
   </main>
   <AuthView v-else-if="!session || passwordRecovery" :notice="authNotice" :password-recovery="passwordRecovery" />
@@ -56,7 +56,7 @@ const activeKey = computed<"home" | "settings" | null>(() => {
     <v-app-bar :height="mdAndUp ? 64 : 56" flat class="app-bar">
       <div class="app-bar-brand">
         <div class="brand-mark">W</div>
-        <span class="app-bar-brand-name">Whaler</span>
+        <span class="app-bar-brand-name">WhalerProd</span>
       </div>
       <div id="app-bar-context" class="app-bar-context" />
       <v-spacer />

@@ -1,6 +1,6 @@
 # Архитектура
 
-Whaler построен вокруг простого правила: браузерный редактор и исполняемый
+WhalerProd построен вокруг простого правила: браузерный редактор и исполняемый
 sandbox должны описывать один и тот же workspace.
 
 ## Основные сервисы
@@ -55,7 +55,7 @@ Runner:
 6. Caddy маршрутизирует preview hostname к runner.
 7. Runner proxy HTTP requests к container IP и preview port.
 
-Для Vite templates Whaler вырезает Vite HMR client и отдает no-op HMR
+Для Vite templates WhalerProd вырезает Vite HMR client и отдает no-op HMR
 compatibility module. Это убирает websocket warnings в браузере, но сохраняет
 CSS injection для Vite-served modules.
 
@@ -71,7 +71,7 @@ document или workspace presence document.
 - при store encoded Yjs state сохраняется, а `files.content` обновляется
   текущим текстом.
 
-Так Whaler поддерживает realtime editing и одновременно держит plain text file
+Так WhalerProd поддерживает realtime editing и одновременно держит plain text file
 tree доступным для API и runner.
 
 ## Границы безопасности

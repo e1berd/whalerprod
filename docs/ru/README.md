@@ -1,6 +1,6 @@
-# Документация Whaler
+# Документация WhalerProd
 
-Whaler состоит из нескольких отдельных сервисов: Vue-приложение, API с
+WhalerProd состоит из нескольких отдельных сервисов: Vue-приложение, API с
 авторизацией, сервер коллаборации, voice-сервис и внутренний Docker runner.
 Supabase отвечает за Auth, Postgres и Storage. Caddy принимает публичный HTTPS
 трафик и маршрутизирует домены приложения, API, realtime-сервисов и preview.
@@ -11,13 +11,13 @@ Supabase отвечает за Auth, Postgres и Storage. Caddy принимае
   Supabase, запуск приложения, сброс локальной базы и работа с отдельными
   сервисами.
 - [Production-деплой](./DEPLOYMENT.md): подготовка сервера, DNS, self-hosted
-  Supabase, wildcard TLS для preview и запуск Whaler.
+  Supabase, wildcard TLS для preview и запуск WhalerProd.
 - [Архитектура](./ARCHITECTURE.md): модель workspace/container, realtime,
   preview routing и границы безопасности.
 
 ## Кратко о runtime
 
-Whaler хранит metadata workspace и файлы в Postgres, а исполняемое состояние
+WhalerProd хранит metadata workspace и файлы в Postgres, а исполняемое состояние
 зеркалирует в Docker-контейнер с volume, смонтированным в `/workspace`.
 Браузерный редактор работает через API и collab websocket, а preview и terminal
 команды запускаются внутри sandbox-контейнера через внутренний runner.

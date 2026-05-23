@@ -1,6 +1,6 @@
 # Architecture
 
-Whaler is designed around a simple rule: the browser editor and the executable
+WhalerProd is designed around a simple rule: the browser editor and the executable
 sandbox must describe the same workspace.
 
 ## Main Services
@@ -55,7 +55,7 @@ The runner:
 6. Caddy routes the preview hostname to the runner.
 7. The runner proxies HTTP requests to the container IP and preview port.
 
-For Vite templates, Whaler strips the Vite HMR client and serves a no-op HMR
+For Vite templates, WhalerProd strips the Vite HMR client and serves a no-op HMR
 compatibility module. This avoids browser websocket noise while preserving CSS
 injection for Vite-served modules.
 
@@ -71,7 +71,7 @@ For file documents:
 - On store, the encoded Yjs state is persisted and `files.content` is updated
   with the current text.
 
-This lets Whaler support realtime editing while keeping a plain text file tree
+This lets WhalerProd support realtime editing while keeping a plain text file tree
 available to the API and runner.
 
 ## Security Boundaries

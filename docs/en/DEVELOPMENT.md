@@ -1,6 +1,6 @@
 # Local Development
 
-This guide starts the full Whaler development stack on one machine.
+This guide starts the full WhalerProd development stack on one machine.
 
 ## Requirements
 

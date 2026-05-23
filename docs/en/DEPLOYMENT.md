@@ -1,7 +1,7 @@
 # Production Deployment
 
 This guide describes a production deployment on a Linux VDS or dedicated server.
-Whaler runs with Docker Compose, Caddy handles public HTTPS traffic, and
+WhalerProd runs with Docker Compose, Caddy handles public HTTPS traffic, and
 Supabase runs as a separate self-hosted production stack or service.
 
 ## Server Requirements
@@ -67,7 +67,7 @@ GOTRUE_MAILER_AUTOCONFIRM=false
 ```
 
 If Supabase Kong/API gateway listens on the same server at `127.0.0.1:54321`,
-set Whaler to reach it through Docker's host gateway:
+set WhalerProd to reach it through Docker's host gateway:
 
 ```dotenv
 SUPABASE_UPSTREAM=host.docker.internal:54321
@@ -75,10 +75,10 @@ SUPABASE_URL_DOCKER=http://host.docker.internal:54321
 VITE_SUPABASE_URL=https://supabase.example.com
 ```
 
-Whaler expects Supabase Auth, Postgres, and Storage to be available. Avatar
+WhalerProd expects Supabase Auth, Postgres, and Storage to be available. Avatar
 uploads use Supabase Storage.
 
-## Whaler Environment
+## WhalerProd Environment
 
 Create `.env` from `.env.example` and replace the production values.
 
@@ -131,7 +131,7 @@ placeholder domains such as `example.com`.
 ## SMTP for Auth Emails
 
 Email confirmation and password recovery are sent by Supabase Auth, not the
-Whaler API.
+WhalerProd API.
 
 Store the source SMTP values in `.env` if convenient:
 
@@ -141,7 +141,7 @@ MAIL_PORT=465
 MAIL_USERNAME=no-reply@example.com
 MAIL_PASSWORD=replace-with-smtp-password
 MAIL_FROM_ADDRESS=no-reply@example.com
-MAIL_FROM_NAME=Whaler
+MAIL_FROM_NAME=WhalerProd
 ```
 
 Map them into the Supabase Auth container:
@@ -211,7 +211,7 @@ Validate Compose:
 docker compose config
 ```
 
-Start Whaler:
+Start WhalerProd:
 
 ```bash
 docker compose up -d --build
@@ -225,7 +225,7 @@ docker compose --profile turn up -d coturn
 
 ## Database Migrations
 
-Run Whaler Drizzle migrations against the production Postgres:
+Run WhalerProd Drizzle migrations against the production Postgres:
 
 ```bash
 pnpm install
